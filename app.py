@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # =========================
 # Config
@@ -104,7 +105,6 @@ def get_gspread_client():
     ]
 
     credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
-    import gspread
     return gspread.authorize(credentials)
 
 
@@ -154,31 +154,13 @@ def only_digits(s) -> str:
     return re.sub(r"\D+", "", str(s or ""))
 
 
-def strip_html_tags(text: str) -> str:
-    """Remove tags HTML e normaliza espaços. Resolve casos de HTML acidental vindo da planilha."""
-    if text is None:
-        return ""
-    s = str(text)
-
-    # remove tags
-    s = re.sub(r"<[^>]+>", " ", s)
-
-    # entidades comuns
-    s = s.replace("&nbsp;", " ").replace("&amp;", "&")
-
-    # normaliza espaços
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
 def clean_cell(v) -> str:
-    """Limpa valor de célula (trim, nan) e remove HTML acidental."""
+    """Limpa valor de célula"""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return ""
     s = str(v).strip()
     if s.lower() in ["nan", "none"]:
         return ""
-    s = strip_html_tags(s)
     return s
 
 
@@ -237,7 +219,7 @@ def cpf_valido(cpf) -> bool:
     cpf = only_digits(cpf)
     if len(cpf) != 11:
         return False
-    if cpf == cpf[0] * 11:
+    if cpf == cpf[0] * 11:  # CPF com todos dígitos iguais
         return False
 
     def calc_dv(cpf_base: str, pesos: list[int]) -> str:
@@ -295,11 +277,6 @@ def load_sheet_df(spreadsheet_id: str, gid: int) -> pd.DataFrame:
             if c not in df.columns:
                 df[c] = ""
 
-        # Vacina: remove HTML/lixo das colunas principais logo na carga
-        for c in REQUIRED_COLS:
-            if c in df.columns:
-                df[c] = df[c].apply(clean_cell)
-
         # Parse de datas e índice de linha
         df["_data_nasc_date"] = df["data_nasc"].apply(parse_date_any)
         df["_sheet_row"] = df.index + 2
@@ -322,10 +299,11 @@ def ensure_header_columns(ws, df: pd.DataFrame):
 
 def build_options_from_df(df: pd.DataFrame, field: str) -> list[str]:
     """Constrói lista de opções únicas a partir dos dados existentes"""
-    series = df.get(field, pd.Series([], dtype=str)).fillna("").astype(str).map(lambda x: clean_cell(x).strip())
+    series = df.get(field, pd.Series([], dtype=str)).fillna("").astype(str).map(lambda x: x.strip())
     vals = [x for x in series.tolist() if x and x.lower() != "nan"]
     uniq = sorted(set(vals), key=lambda x: x.casefold())
 
+    # Opções padrão para evitar listas vazias
     if field == "nacionalidade":
         defaults = ["BRASILEIRA", "BRASILEIRO", "OUTRA"]
         for d in defaults:
@@ -558,6 +536,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Observação: topbar fica com st.markdown porque precisa estar no fluxo da página principal
+
 # Carrega dados
 with st.spinner("Carregando base da igreja..."):
     df = load_sheet_df(SPREADSHEET_ID, WORKSHEET_GID)
@@ -583,22 +563,20 @@ if "search_mae" not in st.session_state:
 def field_block(label: str, missing: bool, *, render_fn):
     """Renderiza campo com destaque se obrigatório e vazio"""
     if missing:
-        st.markdown(
-            f"<div class='miss-wrap'><p class='miss-label'>{label} obrigatório</p></div>",
-            unsafe_allow_html=True,
-        )
+        st.error(f"⚠️ {label} obrigatório", icon="⚠️")
     render_fn()
 
 
 def dropdown_only(label, field_name, current_value="", key_prefix="x"):
     """Renderiza dropdown com opções dinâmicas"""
     opts = dropdown_opts.get(field_name, []) or ["OUTRO"]
-    cur = clean_cell(current_value).strip().upper()
-
+    cur = str(current_value or "").strip().upper()
+    
+    # Tenta encontrar índice exato ou similar
     idx = 0
     if cur and cur in opts:
         idx = opts.index(cur)
-
+    
     return st.selectbox(
         label,
         options=opts,
@@ -610,18 +588,51 @@ def dropdown_only(label, field_name, current_value="", key_prefix="x"):
 def render_found_card(d: dict, total: int):
     """Renderiza card com informações do cadastro encontrado"""
     import html as html_module
-
+    
     dn = parse_date_any(d.get("data_nasc", "")) or st.session_state.search_dn
     mae = clean_cell(d.get("nome_mae", "")) or st.session_state.search_mae
     nome = clean_cell(d.get("nome_completo", "")) or "(Sem nome)"
     cong = clean_cell(d.get("congregacao", ""))
-
+    
+    # Escape HTML para evitar problemas com caracteres especiais
     mae_escaped = html_module.escape(mae)
     nome_escaped = html_module.escape(nome)
     cong_escaped = html_module.escape(cong) if cong else "sem informação"
     data_escaped = html_module.escape(fmt_date_br(dn) if dn else "")
 
     html_content = f"""
+    <style>
+      .card {{
+        background: white;
+        border: 2px solid #DBEAFE;
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 10px 20px rgba(2, 6, 23, .08);
+        margin: 14px 0;
+      }}
+      .section {{
+        font-weight: 900;
+        color: #0B3AA8;
+        font-size: 1.15rem;
+        margin-bottom: 10px;
+      }}
+      .small {{
+        color: #475569;
+        font-weight: 650;
+      }}
+      .found-name {{
+        margin-top: 10px;
+        font-weight: 900;
+        color: #0B3AA8;
+        font-size: 1.15rem;
+      }}
+      .cong-muted {{
+        margin-top: 6px;
+        font-size: .92rem;
+        font-weight: 700;
+        color: #64748B;
+      }}
+    </style>
     <div class="card">
       <div class="section">Cadastro encontrado</div>
       <div class="small">Achamos {total} registro(s). Selecione e atualize.</div>
@@ -643,13 +654,33 @@ def render_found_card(d: dict, total: int):
       </div>
     </div>
     """
-    st.markdown(textwrap.dedent(html_content).strip(), unsafe_allow_html=True)
+    components.html(html_content, height=280)
 
 
 # =========================
 # Busca
 # =========================
-st.markdown('<div class="card"><div class="section">Identificação do membro</div></div>', unsafe_allow_html=True)
+components.html("""
+<style>
+  .card {
+    background: white;
+    border: 2px solid #DBEAFE;
+    border-radius: 18px;
+    padding: 18px;
+    box-shadow: 0 10px 20px rgba(2, 6, 23, .08);
+    margin: 14px 0;
+  }
+  .section {
+    font-weight: 900;
+    color: #0B3AA8;
+    font-size: 1.15rem;
+    margin-bottom: 10px;
+  }
+</style>
+<div class="card">
+  <div class="section">Identificação do membro</div>
+</div>
+""", height=80)
 
 col1, col2 = st.columns(2)
 with col1:
@@ -702,22 +733,40 @@ header = ws.row_values(1)
 # Novo cadastro
 # =========================
 if len(match_ids) == 0:
-    st.markdown(
-        """
+    components.html("""
+<style>
+  .card {
+    background: white;
+    border: 2px solid #DBEAFE;
+    border-radius: 18px;
+    padding: 18px;
+    box-shadow: 0 10px 20px rgba(2, 6, 23, .08);
+    margin: 14px 0;
+  }
+  .section {
+    font-weight: 900;
+    color: #0B3AA8;
+    font-size: 1.15rem;
+    margin-bottom: 10px;
+  }
+  .small {
+    color: #475569;
+    font-weight: 650;
+  }
+</style>
 <div class="card">
   <div class="section">Novo cadastro</div>
   <div class="small">Não encontramos registro. Preencha os dados abaixo.</div>
 </div>
-""",
-        unsafe_allow_html=True,
-    )
+""", height=100)
 
     with st.form("novo_cadastro", clear_on_submit=False):
         dn_val = st.session_state.search_dn
         mae_val = st.session_state.search_mae
 
+        # Campos principais
         st.markdown("### Dados pessoais")
-
+        
         nome_completo = st.text_input(
             "Nome completo *",
             value="",
@@ -753,7 +802,7 @@ if len(match_ids) == 0:
         )
 
         st.markdown("### Endereço")
-
+        
         bairro = st.selectbox(
             "Bairro/Distrito *",
             options=BAIRROS_DISTRITOS,
@@ -769,7 +818,7 @@ if len(match_ids) == 0:
         )
 
         st.markdown("### Filiação")
-
+        
         col_mae, col_pai = st.columns(2)
         with col_mae:
             nome_mae = st.text_input(
@@ -785,7 +834,7 @@ if len(match_ids) == 0:
             )
 
         st.markdown("### Dados complementares")
-
+        
         col_nat, col_nac = st.columns(2)
         with col_nat:
             naturalidade = st.text_input(
@@ -827,7 +876,7 @@ if len(match_ids) == 0:
 
         st.markdown("---")
         st.markdown("**Campos marcados com * são obrigatórios**", help="Preencha todos os campos obrigatórios")
-
+        
         salvar = st.form_submit_button("✓ Salvar novo cadastro", use_container_width=True)
 
         if salvar:
@@ -855,6 +904,7 @@ if len(match_ids) == 0:
                 "atualizado": now_str,
             }
 
+            # Validações
             missing_list = validate_required(payload)
             if missing_list:
                 st.error(f"❌ Preencha os campos obrigatórios: {', '.join(missing_list)}")
@@ -868,14 +918,16 @@ if len(match_ids) == 0:
                 st.error("❌ WhatsApp inválido. Precisa ter 11 números (DDD + número).")
                 st.stop()
 
+            # Salva
             try:
                 with st.spinner("Salvando cadastro..."):
                     append_row_in_sheet(ws, header, payload)
                     st.cache_data.clear()
-
+                    
                 st.success(f"✅ Cadastro salvo com sucesso! ID: {novo_id}")
                 st.balloons()
-
+                
+                # Reset e rerun após 2 segundos
                 import time
                 time.sleep(2)
                 st.session_state.searched = False
@@ -894,6 +946,7 @@ if len(match_ids) == 0:
 matches_df = df.loc[match_ids].copy()
 total_found = len(matches_df)
 
+# Seleção de múltiplos registros
 if total_found > 1:
     matches_df = matches_df.sort_values(by=["nome_completo"], na_position="last")
     options = []
@@ -924,7 +977,7 @@ row_dn = parse_date_any(row.get("data_nasc", ""))
 
 with st.form("editar_cadastro", clear_on_submit=False):
     st.markdown("### Dados pessoais")
-
+    
     nome_completo = st.text_input(
         "Nome completo *",
         value=clean_cell(row.get("nome_completo", "")),
@@ -944,7 +997,7 @@ with st.form("editar_cadastro", clear_on_submit=False):
     with col_cpf:
         cpf_input = st.text_input(
             "CPF *",
-            value=format_cpf(clean_cell(row.get("cpf", ""))),
+            value=format_cpf(row.get("cpf", "")),
             placeholder="000.000.000-00",
             key="edit_cpf",
             max_chars=14
@@ -952,14 +1005,14 @@ with st.form("editar_cadastro", clear_on_submit=False):
 
     whatsapp_input = st.text_input(
         "WhatsApp/Telefone *",
-        value=format_phone_br(clean_cell(row.get("whatsapp_telefone", ""))),
+        value=format_phone_br(row.get("whatsapp_telefone", "")),
         placeholder="(88) 9.9999-9999",
         key="edit_whats",
         max_chars=15
     )
 
     st.markdown("### Endereço")
-
+    
     bairro = st.selectbox(
         "Bairro/Distrito *",
         options=BAIRROS_DISTRITOS,
@@ -974,7 +1027,7 @@ with st.form("editar_cadastro", clear_on_submit=False):
     )
 
     st.markdown("### Filiação")
-
+    
     col_mae, col_pai = st.columns(2)
     with col_mae:
         nome_mae = st.text_input(
@@ -990,7 +1043,7 @@ with st.form("editar_cadastro", clear_on_submit=False):
         )
 
     st.markdown("### Dados complementares")
-
+    
     col_nat, col_nac = st.columns(2)
     with col_nat:
         naturalidade = st.text_input(
@@ -1030,7 +1083,7 @@ with st.form("editar_cadastro", clear_on_submit=False):
 
     st.markdown("---")
     st.markdown("**Campos marcados com * são obrigatórios**")
-
+    
     salvar = st.form_submit_button("✓ Salvar atualização", use_container_width=True)
 
     if salvar:
@@ -1055,6 +1108,7 @@ with st.form("editar_cadastro", clear_on_submit=False):
             "atualizado": now_str,
         }
 
+        # Validações
         missing_list = validate_required(payload)
         if missing_list:
             st.error(f"❌ Preencha os campos obrigatórios: {', '.join(missing_list)}")
@@ -1068,14 +1122,16 @@ with st.form("editar_cadastro", clear_on_submit=False):
             st.error("❌ WhatsApp inválido. Precisa ter 11 números (DDD + número).")
             st.stop()
 
+        # Salva
         try:
             with st.spinner("Salvando alterações..."):
                 update_row_in_sheet(ws, sheet_row, header, payload)
                 st.cache_data.clear()
-
+                
             st.success("✅ Cadastro atualizado com sucesso!")
             st.balloons()
-
+            
+            # Reset e rerun após 2 segundos
             import time
             time.sleep(2)
             st.session_state.searched = False
