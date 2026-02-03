@@ -21,6 +21,8 @@ WORKSHEET_GID = 1191582738
 
 # Colunas obrigatórias no Sheets
 REQUIRED_COLS = [
+    "membro_id",
+    "cod_membro",
     "data_nasc",
     "nome_mae",
     "nome_completo",
@@ -226,6 +228,10 @@ def clean_cell(v) -> str:
     return s
 
 
+def is_missing(v) -> bool:
+    return clean_cell(v) == ""
+
+
 # =========================
 # Carregar dados do Sheets
 # =========================
@@ -239,25 +245,19 @@ def load_sheet_df(spreadsheet_id: str, gid: int) -> pd.DataFrame:
     values = ws.get_all_values()
 
     if not values:
-        # cria cabeçalho mínimo
         header = REQUIRED_COLS[:]
         ws.append_row(header, value_input_option="USER_ENTERED")
         values = ws.get_all_values()
 
     header = values[0]
     rows = values[1:]
-
     df = pd.DataFrame(rows, columns=header)
 
-    # garante colunas exigidas
     for c in REQUIRED_COLS:
         if c not in df.columns:
             df[c] = ""
 
-    # normaliza datas para filtro
     df["_data_nasc_date"] = df["data_nasc"].apply(parse_date_any)
-
-    # guarda índice 1-based do Sheets
     df["_sheet_row"] = df.index + 2
 
     return df
@@ -269,7 +269,6 @@ def ensure_header_columns(ws, df: pd.DataFrame):
     if need_add:
         new_header = header + need_add
         ws.update("1:1", [new_header])
-    # garante que df tenha também
     for c in REQUIRED_COLS:
         if c not in df.columns:
             df[c] = ""
@@ -307,11 +306,17 @@ def find_matches(df: pd.DataFrame, dn: date, mae: str) -> pd.DataFrame:
     return df[mask_dn & mask_mae].copy()
 
 
+def gspread_a1(r1, c1, r2, c2):
+    def col_to_a1(n):
+        s = ""
+        while n:
+            n, r = divmod(n - 1, 26)
+            s = chr(65 + r) + s
+        return s
+    return f"{col_to_a1(c1)}{r1}:{col_to_a1(c2)}{r2}"
+
+
 def update_row_in_sheet(ws, sheet_row: int, header: list[str], payload: dict):
-    """
-    Atualiza uma linha inteira, respeitando o cabeçalho.
-    Só mexe nas colunas do payload.
-    """
     row_values = ws.row_values(sheet_row)
     if len(row_values) < len(header):
         row_values = row_values + [""] * (len(header) - len(row_values))
@@ -321,11 +326,8 @@ def update_row_in_sheet(ws, sheet_row: int, header: list[str], payload: dict):
             idx = header.index(k)
             row_values[idx] = clean_cell(v)
 
-    # update range completo da linha
-    start_col = 1
-    end_col = len(header)
     ws.update(
-        range_name=gspread_a1(sheet_row, start_col, sheet_row, end_col),
+        range_name=gspread_a1(sheet_row, 1, sheet_row, len(header)),
         values=[row_values],
         value_input_option="USER_ENTERED"
     )
@@ -336,14 +338,12 @@ def append_row_in_sheet(ws, header: list[str], payload: dict):
     ws.append_row(row, value_input_option="USER_ENTERED")
 
 
-def gspread_a1(r1, c1, r2, c2):
-    def col_to_a1(n):
-        s = ""
-        while n:
-            n, r = divmod(n - 1, 26)
-            s = chr(65 + r) + s
-        return s
-    return f"{col_to_a1(c1)}{r1}:{col_to_a1(c2)}{r2}"
+def next_membro_id(df: pd.DataFrame) -> int:
+    s = df.get("membro_id", pd.Series([], dtype=str)).fillna("").astype(str).map(lambda x: only_digits(x))
+    nums = pd.to_numeric(s, errors="coerce")
+    if nums.notna().any():
+        return int(nums.max()) + 1
+    return 1
 
 
 # =========================
@@ -396,6 +396,16 @@ div.stButton>button{
   font-size: 1rem !important;
 }
 hr{ border: none; height: 3px; background: linear-gradient(90deg, transparent, #BFDBFE, transparent); margin: 18px 0; }
+
+.missing-note{
+  background: #FEF3C7;
+  border: 2px solid #F59E0B;
+  color: #92400E;
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-weight: 800;
+  margin: 10px 0 6px 0;
+}
 .success-box{
   background: linear-gradient(135deg, #ECFDF5, #BBF7D0);
   border: 2px solid #22C55E;
@@ -404,20 +414,14 @@ hr{ border: none; height: 3px; background: linear-gradient(90deg, transparent, #
   text-align: center;
   box-shadow: var(--shadow);
 }
-.warn-box{
-  background: linear-gradient(135deg, #FFFBEB, #FEF3C7);
-  border: 2px solid #F59E0B;
-  border-radius: 18px;
-  padding: 14px;
-  box-shadow: var(--shadow);
-}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
+# Logo menor
 if os.path.exists(LOGO_PATH):
-    st.image(LOGO_PATH, use_container_width=True)
+    st.image(LOGO_PATH, width=220)
 
 st.markdown(
     f"""
@@ -429,17 +433,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# carrega base
 with st.spinner("Carregando base da igreja..."):
     df = load_sheet_df(SPREADSHEET_ID, WORKSHEET_GID)
 
 if df.empty:
     st.stop()
 
-# options de dropdowns
 dropdown_opts = {f: build_options_from_df(df, f) for f in DROPDOWN_FIELDS}
 
-# estado de busca
 if "searched" not in st.session_state:
     st.session_state.searched = False
 if "match_ids" not in st.session_state:
@@ -486,7 +487,6 @@ if not st.session_state.searched:
 
 match_ids = st.session_state.match_ids
 
-# abre cliente e worksheet para escrita
 client = get_gspread_client()
 if client is None:
     st.stop()
@@ -503,6 +503,9 @@ def dropdown_text(label, field_name, current_value="", key_prefix="x"):
     if choice == "Outro":
         return st.text_input(label, value=cur, key=f"{key_prefix}_{field_name}_txt").strip()
     return choice
+
+def missing_banner(label: str):
+    st.markdown(f"<div class='missing-note'>Sem informação em {label}. Atualize esse campo.</div>", unsafe_allow_html=True)
 
 # =========================
 # Novo cadastro
@@ -551,8 +554,11 @@ if len(match_ids) == 0:
                 st.stop()
 
             now_str = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+            novo_id = next_membro_id(df)
 
             payload = {
+                "membro_id": str(novo_id),
+                "cod_membro": "",  # deixa vazio como você pediu
                 "data_nasc": fmt_date_br(st.session_state.search_dn),
                 "nome_mae": st.session_state.search_mae,
                 "nome_completo": nome_completo.strip(),
@@ -632,24 +638,50 @@ bairro_current = clean_cell(row.get("bairro_distrito", ""))
 bairro_index = BAIRROS_DISTRITOS.index(bairro_current) if bairro_current in BAIRROS_DISTRITOS else 0
 
 with st.form("editar_cadastro"):
+    if is_missing(row.get("nome_completo", "")):
+        missing_banner("Nome completo")
     nome_completo = st.text_input("Nome completo", value=clean_cell(row.get("nome_completo", "")))
 
+    if is_missing(row.get("cpf", "")):
+        missing_banner("CPF")
     cpf_current = format_cpf(row.get("cpf", ""))
     cpf_raw = st.text_input("CPF", value=cpf_current, placeholder="000.000.000-00")
 
+    if is_missing(row.get("whatsapp_telefone", "")):
+        missing_banner("WhatsApp/Telefone")
     phone_current = format_phone_br(row.get("whatsapp_telefone", ""))
     whatsapp_raw = st.text_input("WhatsApp/Telefone", value=phone_current, placeholder="(88) 9.9999-9999")
 
+    if is_missing(row.get("bairro_distrito", "")):
+        missing_banner("Bairro/Distrito")
     bairro = st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=bairro_index)
 
+    if is_missing(row.get("endereco", "")):
+        missing_banner("Endereço")
     endereco = st.text_input("Endereço", value=clean_cell(row.get("endereco", "")))
+
+    if is_missing(row.get("nome_pai", "")):
+        missing_banner("Nome do pai")
     nome_pai = st.text_input("Nome do pai", value=clean_cell(row.get("nome_pai", "")))
+
+    if is_missing(row.get("naturalidade", "")):
+        missing_banner("Naturalidade")
     naturalidade = st.text_input("Naturalidade", value=clean_cell(row.get("naturalidade", "")))
 
+    if is_missing(row.get("nacionalidade", "")):
+        missing_banner("Nacionalidade")
     nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", row.get("nacionalidade", ""), key_prefix="edit")
+
+    if is_missing(row.get("estado_civil", "")):
+        missing_banner("Estado civil")
     estado_civil = dropdown_text("Estado civil", "estado_civil", row.get("estado_civil", ""), key_prefix="edit")
 
+    if is_missing(row.get("data_batismo", "")):
+        missing_banner("Data do batismo")
     data_batismo = st.text_input("Data do batismo", value=clean_cell(row.get("data_batismo", "")))
+
+    if is_missing(row.get("congregacao", "")):
+        missing_banner("Congregação")
     congregacao = dropdown_text("Congregação", "congregacao", row.get("congregacao", ""), key_prefix="edit")
 
     st.markdown("---")
@@ -667,6 +699,7 @@ with st.form("editar_cadastro"):
             st.error("WhatsApp inválido. Precisa ter 11 números.")
             st.stop()
 
+        # 1) atualizado com data e hora
         now_str = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
 
         payload = {
