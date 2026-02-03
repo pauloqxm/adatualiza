@@ -15,11 +15,9 @@ TZ = ZoneInfo("America/Fortaleza")
 
 LOGO_PATH = os.path.join("data", "logo_ad.jpg")
 
-# Planilha
 SPREADSHEET_ID = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
 WORKSHEET_GID = 1191582738
 
-# Colunas esperadas no Sheets
 REQUIRED_COLS = [
     "membro_id",
     "cod_membro",
@@ -39,7 +37,6 @@ REQUIRED_COLS = [
     "atualizado",
 ]
 
-# Obrigatórios no formulário
 REQUIRED_FIELDS = {
     "nome_completo": "Nome completo",
     "cpf": "CPF",
@@ -52,7 +49,6 @@ REQUIRED_FIELDS = {
     "congregacao": "Congregação",
 }
 
-# Lista fixa de Bairro/Distrito
 BAIRROS_DISTRITOS = [
     "Argentina Siqueira", "Belém", "Berilândia", "Centro", "Cohab", "Conjunto Esperança",
     "Damião Carneiro", "Depósito", "Distrito Industrial", "Duque De Caxias",
@@ -66,7 +62,7 @@ DROPDOWN_FIELDS = ["congregacao", "nacionalidade", "estado_civil"]
 
 
 # =========================
-# Google Sheets connection
+# Google Sheets
 # =========================
 def get_gspread_client():
     try:
@@ -454,6 +450,12 @@ hr{
   font-weight: 900;
   margin: 0;
 }
+.found-name{
+  margin-top:10px;
+  font-weight:900;
+  color: var(--blue2);
+  font-size: 1.05rem;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -511,6 +513,36 @@ def field_block(label: str, missing: bool, *, render_fn):
     render_fn()
 
 
+def dropdown_text(label, field_name, current_value="", key_prefix="x"):
+    opts = dropdown_opts[field_name]
+    cur = str(current_value or "").strip()
+    idx = opts.index(cur) if cur in opts else (opts.index("Outro") if "Outro" in opts else 0)
+    choice = st.selectbox(label, options=opts, index=idx, key=f"{key_prefix}_{field_name}_sel")
+    if choice == "Outro":
+        return st.text_input(label, value=cur, key=f"{key_prefix}_{field_name}_txt").strip()
+    return choice
+
+
+def render_found_card(d: dict, total: int):
+    dn = parse_date_any(d.get("data_nasc", "")) or st.session_state.search_dn
+    mae = clean_cell(d.get("nome_mae", "")) or st.session_state.search_mae
+    nome = clean_cell(d.get("nome_completo", "")) or "(Sem nome)"
+
+    st.markdown(
+        f"""
+<div class="card">
+  <div class="section">Cadastro encontrado</div>
+  <div class="small">Achamos {total} registro(s). Selecione e atualize.</div>
+  <hr/>
+  <div class="small"><b>Data de nascimento:</b> {fmt_date_br(dn) if dn else ""}</div>
+  <div class="small"><b>Nome da mãe:</b> {mae}</div>
+  <div class="found-name">{nome}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 st.markdown('<div class="card"><div class="section">Identificação do membro</div></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
@@ -556,17 +588,6 @@ ws = open_worksheet_by_gid(client, SPREADSHEET_ID, WORKSHEET_GID)
 ensure_header_columns(ws, df)
 header = ws.row_values(1)
 
-
-def dropdown_text(label, field_name, current_value="", key_prefix="x"):
-    opts = dropdown_opts[field_name]
-    cur = str(current_value or "").strip()
-    idx = opts.index(cur) if cur in opts else (opts.index("Outro") if "Outro" in opts else 0)
-    choice = st.selectbox(label, options=opts, index=idx, key=f"{key_prefix}_{field_name}_sel")
-    if choice == "Outro":
-        return st.text_input(label, value=cur, key=f"{key_prefix}_{field_name}_txt").strip()
-    return choice
-
-
 # =========================
 # Novo cadastro
 # =========================
@@ -603,59 +624,31 @@ if len(match_ids) == 0:
             render_fn=lambda: st.text_input("Nome da mãe", value=mae_val, key="new_mae"),
         )
 
-        field_block(
-            "Nome completo",
-            missing=True,
-            render_fn=lambda: None
-        )
+        field_block("Nome completo", missing=True, render_fn=lambda: None)
         nome_completo = st.text_input("Nome completo", value="", key="new_nome")
 
-        field_block(
-            "CPF",
-            missing=True,
-            render_fn=lambda: None
-        )
+        field_block("CPF", missing=True, render_fn=lambda: None)
         cpf_raw = st.text_input("CPF", value="", placeholder="000.000.000-00", key="new_cpf")
 
-        field_block(
-            "WhatsApp/Telefone",
-            missing=True,
-            render_fn=lambda: None
-        )
+        field_block("WhatsApp/Telefone", missing=True, render_fn=lambda: None)
         whatsapp_raw = st.text_input("WhatsApp/Telefone", value="", placeholder="(88) 9.9999-9999", key="new_whats")
 
-        field_block(
-            "Bairro/Distrito",
-            missing=True,
-            render_fn=lambda: None
-        )
+        field_block("Bairro/Distrito", missing=True, render_fn=lambda: None)
         bairro = st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=0, key="new_bairro")
 
-        field_block(
-            "Endereço",
-            missing=True,
-            render_fn=lambda: None
-        )
+        field_block("Endereço", missing=True, render_fn=lambda: None)
         endereco = st.text_input("Endereço", value="", key="new_endereco")
 
         nome_pai = st.text_input("Nome do pai", value="", key="new_pai")
         naturalidade = st.text_input("Naturalidade", value="", key="new_naturalidade")
         nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", "", key_prefix="new")
 
-        field_block(
-            "Estado civil",
-            missing=True,
-            render_fn=lambda: None
-        )
+        field_block("Estado civil", missing=True, render_fn=lambda: None)
         estado_civil = dropdown_text("Estado civil", "estado_civil", "", key_prefix="new")
 
         data_batismo = st.text_input("Data do batismo", value="", placeholder="Ex.: 05/12/1992", key="new_batismo")
 
-        field_block(
-            "Congregação",
-            missing=True,
-            render_fn=lambda: None
-        )
+        field_block("Congregação", missing=True, render_fn=lambda: None)
         congregacao = dropdown_text("Congregação", "congregacao", "", key_prefix="new")
 
         st.markdown("---")
@@ -714,33 +707,28 @@ if len(match_ids) == 0:
 
     st.stop()
 
-
 # =========================
 # Editar cadastro existente
 # =========================
 matches_df = df.loc[match_ids].copy()
+total_found = len(matches_df)
 
-st.markdown(
-    f"""
-<div class="card">
-  <div class="section">Cadastro encontrado</div>
-  <div class="small">Achamos {len(matches_df)} registro(s). Selecione e atualize.</div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-if len(matches_df) > 1:
+if total_found > 1:
     matches_df = matches_df.sort_values(by=["nome_completo"], na_position="last")
     options = []
     for idx, r in matches_df.iterrows():
         nome = clean_cell(r.get("nome_completo", "")) or "(Sem nome)"
         cong = clean_cell(r.get("congregacao", ""))
         options.append((idx, f"{nome} | {cong}" if cong else nome))
+
     sel = st.selectbox("Selecione o membro", options=options, format_func=lambda x: x[1])
     sel_idx = sel[0]
 else:
     sel_idx = matches_df.index[0]
+
+# Card mostrando DN, mãe e nome do selecionado
+row_preview = df.loc[sel_idx].to_dict()
+render_found_card(row_preview, total_found)
 
 row = df.loc[sel_idx].copy()
 sheet_row = int(row["_sheet_row"])
@@ -802,20 +790,12 @@ with st.form("editar_cadastro"):
     naturalidade = st.text_input("Naturalidade", value=clean_cell(row.get("naturalidade", "")), key="edit_naturalidade")
     nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", row.get("nacionalidade", ""), key_prefix="edit")
 
-    field_block(
-        "Estado civil",
-        missing=is_missing(row.get("estado_civil", "")),
-        render_fn=lambda: None
-    )
+    field_block("Estado civil", missing=is_missing(row.get("estado_civil", "")), render_fn=lambda: None)
     estado_civil = dropdown_text("Estado civil", "estado_civil", row.get("estado_civil", ""), key_prefix="edit")
 
     data_batismo = st.text_input("Data do batismo", value=clean_cell(row.get("data_batismo", "")), key="edit_batismo")
 
-    field_block(
-        "Congregação",
-        missing=is_missing(row.get("congregacao", "")),
-        render_fn=lambda: None
-    )
+    field_block("Congregação", missing=is_missing(row.get("congregacao", "")), render_fn=lambda: None)
     congregacao = dropdown_text("Congregação", "congregacao", row.get("congregacao", ""), key_prefix="edit")
 
     st.markdown("---")
