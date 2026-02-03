@@ -1,6 +1,7 @@
 import os
 import re
 import unicodedata
+import textwrap
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
@@ -8,15 +9,16 @@ import pandas as pd
 import streamlit as st
 
 # =========================
-# Config geral
+# Config
 # =========================
 APP_TITLE = "Atualização de Cadastro da Igreja"
 TZ = ZoneInfo("America/Fortaleza")
 
 LOGO_PATH = os.path.join("data", "logo_ad.jpg")
 
+# Google Sheets
 SPREADSHEET_ID = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
-WORKSHEET_GID = 1191582738
+WORKSHEET_GID = 1191582738  # id da aba (gid)
 
 REQUIRED_COLS = [
     "membro_id",
@@ -62,12 +64,12 @@ DROPDOWN_FIELDS = ["congregacao", "nacionalidade", "estado_civil"]
 
 
 # =========================
-# Google Sheets
+# Google auth
 # =========================
 def get_gspread_client():
     try:
         import gspread
-        from google.oauth2.service_account import Credentials
+        from google.oauth2.service_account import Credentials  # noqa
     except Exception:
         st.error("Dependências ausentes. Instale gspread e google-auth no requirements.txt.")
         return None
@@ -147,6 +149,19 @@ def only_digits(s) -> str:
     return re.sub(r"\D+", "", str(s or ""))
 
 
+def clean_cell(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    s = str(v).strip()
+    if s.lower() in ["nan", "none"]:
+        return ""
+    return s
+
+
+def is_missing(v) -> bool:
+    return clean_cell(v) == ""
+
+
 def parse_date_any(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
@@ -204,7 +219,6 @@ def cpf_valido(cpf) -> bool:
     dv1 = calc_dv(base9, list(range(10, 1, -1)))
     base10 = base9 + dv1
     dv2 = calc_dv(base10, list(range(11, 1, -1)))
-
     return cpf == base9 + dv1 + dv2
 
 
@@ -219,19 +233,6 @@ def format_phone_br(value) -> str:
     ddd = d[:2]
     n = d[2:]
     return f"({ddd}) {n[0]}.{n[1:5]}-{n[5:]}"
-
-
-def clean_cell(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return ""
-    s = str(v).strip()
-    if s.lower() in ["nan", "none"]:
-        return ""
-    return s
-
-
-def is_missing(v) -> bool:
-    return clean_cell(v) == ""
 
 
 # =========================
@@ -278,6 +279,7 @@ def build_options_from_df(df: pd.DataFrame, field: str) -> list[str]:
     vals = [x for x in series.tolist() if x and x.lower() != "nan"]
     uniq = sorted(set(vals), key=lambda x: x.casefold())
 
+    # defaults para não ficar vazio
     if field == "nacionalidade":
         defaults = ["BRASILEIRA", "BRASILEIRO", "OUTRA"]
         for d in defaults:
@@ -290,8 +292,8 @@ def build_options_from_df(df: pd.DataFrame, field: str) -> list[str]:
             if d not in uniq:
                 uniq.append(d)
 
-    if "Outro" not in uniq:
-        uniq.append("Outro")
+    if not uniq:
+        uniq = ["OUTRO"]
 
     return uniq
 
@@ -359,7 +361,7 @@ def validate_required(payload: dict) -> list[str]:
 
 
 # =========================
-# UI
+# UI setup
 # =========================
 st.set_page_config(page_title="Igreja - Atualização de Cadastro", page_icon="📘", layout="centered")
 
@@ -456,11 +458,6 @@ hr{
   color: var(--blue2);
   font-size: 1.15rem;
 }
-.found-cong{
-  margin-top:4px;
-  font-weight:700;
-  color: rgba(255,255,255,.0);
-}
 .cong-muted{
   margin-top: 6px;
   font-size: .92rem;
@@ -472,7 +469,7 @@ hr{
     unsafe_allow_html=True,
 )
 
-# Topbar com logo dentro do retângulo
+# Logo pequena dentro do retângulo
 logo_html = ""
 if os.path.exists(LOGO_PATH):
     import base64
@@ -480,7 +477,7 @@ if os.path.exists(LOGO_PATH):
         b64 = base64.b64encode(f.read()).decode("utf-8")
     logo_html = (
         f"<img src='data:image/jpeg;base64,{b64}' "
-        "style='width:64px;height:64px;object-fit:contain;border-radius:12px;"
+        "style='width:56px;height:56px;object-fit:contain;border-radius:12px;"
         "background:rgba(255,255,255,.15);padding:6px;' />"
     )
 
@@ -505,6 +502,7 @@ if df.empty:
 
 dropdown_opts = {f: build_options_from_df(df, f) for f in DROPDOWN_FIELDS}
 
+# Estado
 if "searched" not in st.session_state:
     st.session_state.searched = False
 if "match_ids" not in st.session_state:
@@ -524,14 +522,16 @@ def field_block(label: str, missing: bool, *, render_fn):
     render_fn()
 
 
-def dropdown_text(label, field_name, current_value="", key_prefix="x"):
-    opts = dropdown_opts[field_name]
+def dropdown_only(label, field_name, current_value="", key_prefix="x"):
+    opts = dropdown_opts.get(field_name, []) or ["OUTRO"]
     cur = str(current_value or "").strip()
-    idx = opts.index(cur) if cur in opts else (opts.index("Outro") if "Outro" in opts else 0)
-    choice = st.selectbox(label, options=opts, index=idx, key=f"{key_prefix}_{field_name}_sel")
-    if choice == "Outro":
-        return st.text_input(label, value=cur, key=f"{key_prefix}_{field_name}_txt").strip()
-    return choice
+    idx = opts.index(cur) if cur in opts else 0
+    return st.selectbox(
+        label,
+        options=opts,
+        index=idx,
+        key=f"{key_prefix}_{field_name}_sel",
+    )
 
 
 def render_found_card(d: dict, total: int):
@@ -540,33 +540,34 @@ def render_found_card(d: dict, total: int):
     nome = clean_cell(d.get("nome_completo", "")) or "(Sem nome)"
     cong = clean_cell(d.get("congregacao", ""))
 
-    st.markdown(
-        f"""
-<div class="card">
-  <div class="section">Cadastro encontrado</div>
-  <div class="small">Achamos {total} registro(s). Selecione e atualize.</div>
+    html = f"""
+    <div class="card">
+      <div class="section">Cadastro encontrado</div>
+      <div class="small">Achamos {total} registro(s). Selecione e atualize.</div>
 
-  <div style="margin-top:12px;">
-    <div class="small"><b>Data de nascimento</b></div>
-    <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:10px;">
-      {fmt_date_br(dn) if dn else ""}
+      <div style="margin-top:12px;">
+        <div class="small"><b>Data de nascimento</b></div>
+        <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:10px;">
+          {fmt_date_br(dn) if dn else ""}
+        </div>
+
+        <div class="small"><b>Nome da mãe</b></div>
+        <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:12px;">
+          {mae}
+        </div>
+
+        <div class="small"><b>Nome</b></div>
+        <div class="found-name">{nome}</div>
+        <div class="cong-muted">Congregação: {cong if cong else "sem informação"}</div>
+      </div>
     </div>
-
-    <div class="small"><b>Nome da mãe</b></div>
-    <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:12px;">
-      {mae}
-    </div>
-
-    <div class="small"><b>Nome</b></div>
-    <div class="found-name">{nome}</div>
-    {f"<div class='cong-muted'>Congregação: {cong}</div>" if cong else "<div class='cong-muted'>Congregação: sem informação</div>"}
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    """
+    st.markdown(textwrap.dedent(html).strip(), unsafe_allow_html=True)
 
 
+# =========================
+# Busca
+# =========================
 st.markdown('<div class="card"><div class="section">Identificação do membro</div></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
@@ -671,15 +672,17 @@ if len(match_ids) == 0:
             nome_pai = st.text_input("Nome do pai", value="", key="new_pai")
 
         naturalidade = st.text_input("Naturalidade", value="", key="new_naturalidade")
-        nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", "", key_prefix="new")
+
+        # Apenas dropdown, sem duplicar
+        nacionalidade = dropdown_only("Nacionalidade", "nacionalidade", "", key_prefix="new")
 
         field_block("Estado civil", missing=True, render_fn=lambda: None)
-        estado_civil = dropdown_text("Estado civil", "estado_civil", "", key_prefix="new")
+        estado_civil = dropdown_only("Estado civil", "estado_civil", "", key_prefix="new")
 
         data_batismo = st.text_input("Data do batismo", value="", placeholder="Ex.: 05/12/1992", key="new_batismo")
 
         field_block("Congregação", missing=True, render_fn=lambda: None)
-        congregacao = dropdown_text("Congregação", "congregacao", "", key_prefix="new")
+        congregacao = dropdown_only("Congregação", "congregacao", "", key_prefix="new")
 
         st.markdown("---")
         salvar = st.form_submit_button("Salvar novo cadastro")
@@ -738,7 +741,7 @@ if len(match_ids) == 0:
     st.stop()
 
 # =========================
-# Editar cadastro existente
+# Editar cadastro
 # =========================
 matches_df = df.loc[match_ids].copy()
 total_found = len(matches_df)
@@ -823,15 +826,17 @@ with st.form("editar_cadastro"):
         nome_pai = st.text_input("Nome do pai", value=clean_cell(row.get("nome_pai", "")), key="edit_pai")
 
     naturalidade = st.text_input("Naturalidade", value=clean_cell(row.get("naturalidade", "")), key="edit_naturalidade")
-    nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", row.get("nacionalidade", ""), key_prefix="edit")
+
+    # Apenas dropdown, sem duplicar
+    nacionalidade = dropdown_only("Nacionalidade", "nacionalidade", row.get("nacionalidade", ""), key_prefix="edit")
 
     field_block("Estado civil", missing=is_missing(row.get("estado_civil", "")), render_fn=lambda: None)
-    estado_civil = dropdown_text("Estado civil", "estado_civil", row.get("estado_civil", ""), key_prefix="edit")
+    estado_civil = dropdown_only("Estado civil", "estado_civil", row.get("estado_civil", ""), key_prefix="edit")
 
     data_batismo = st.text_input("Data do batismo", value=clean_cell(row.get("data_batismo", "")), key="edit_batismo")
 
     field_block("Congregação", missing=is_missing(row.get("congregacao", "")), render_fn=lambda: None)
-    congregacao = dropdown_text("Congregação", "congregacao", row.get("congregacao", ""), key_prefix="edit")
+    congregacao = dropdown_only("Congregação", "congregacao", row.get("congregacao", ""), key_prefix="edit")
 
     st.markdown("---")
     salvar = st.form_submit_button("Salvar atualização")
