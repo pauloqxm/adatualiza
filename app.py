@@ -66,16 +66,19 @@ DROPDOWN_FIELDS = ["congregacao", "nacionalidade", "estado_civil"]
 # =========================
 # Google auth
 # =========================
+@st.cache_resource
 def get_gspread_client():
+    """Cache do cliente gspread para evitar reconexões"""
     try:
         import gspread
-        from google.oauth2.service_account import Credentials  # noqa
+        from google.oauth2.service_account import Credentials
     except Exception:
         st.error("Dependências ausentes. Instale gspread e google-auth no requirements.txt.")
         return None
 
     creds_info = None
 
+    # Prioridade: st.secrets > service_account.json > env var
     if "gcp_service_account" in st.secrets:
         creds_info = st.secrets["gcp_service_account"]
     else:
@@ -84,8 +87,7 @@ def get_gspread_client():
             import json
             with open(sa_path, "r", encoding="utf-8") as f:
                 creds_info = json.load(f)
-
-        if creds_info is None and os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        elif os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
             import json
             env_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
             if os.path.exists(env_path):
@@ -101,14 +103,12 @@ def get_gspread_client():
         "https://www.googleapis.com/auth/drive",
     ]
 
-    from google.oauth2.service_account import Credentials
     credentials = Credentials.from_service_account_info(creds_info, scopes=scope)
-
-    import gspread
     return gspread.authorize(credentials)
 
 
 def open_worksheet_by_gid(client, spreadsheet_id: str, gid: int):
+    """Abre planilha pelo GID"""
     import gspread
     sh = client.open_by_key(spreadsheet_id)
     for ws in sh.worksheets():
@@ -124,11 +124,13 @@ def open_worksheet_by_gid(client, spreadsheet_id: str, gid: int):
 # Helpers
 # =========================
 def _strip_accents(s: str) -> str:
+    """Remove acentos de string"""
     s = unicodedata.normalize("NFKD", s)
     return "".join(ch for ch in s if not unicodedata.combining(ch))
 
 
 def norm_text(s) -> str:
+    """Normaliza texto: remove acentos, lowercase, espaços extras"""
     if s is None or (isinstance(s, float) and pd.isna(s)):
         return ""
     s = str(s).strip()
@@ -139,6 +141,7 @@ def norm_text(s) -> str:
 
 
 def first_token(s) -> str:
+    """Retorna primeira palavra normalizada"""
     s = norm_text(s)
     if not s:
         return ""
@@ -146,10 +149,12 @@ def first_token(s) -> str:
 
 
 def only_digits(s) -> str:
+    """Extrai apenas dígitos"""
     return re.sub(r"\D+", "", str(s or ""))
 
 
 def clean_cell(v) -> str:
+    """Limpa valor de célula"""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return ""
     s = str(v).strip()
@@ -159,10 +164,12 @@ def clean_cell(v) -> str:
 
 
 def is_missing(v) -> bool:
+    """Verifica se valor está vazio"""
     return clean_cell(v) == ""
 
 
 def parse_date_any(v):
+    """Parse flexível de datas em vários formatos"""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     if isinstance(v, date) and not isinstance(v, datetime):
@@ -174,12 +181,14 @@ def parse_date_any(v):
     if not s:
         return None
 
+    # Tenta formatos comuns
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y"):
         try:
             return datetime.strptime(s, fmt).date()
         except Exception:
             pass
 
+    # Fallback com pandas
     try:
         dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
         if pd.isna(dt):
@@ -190,12 +199,14 @@ def parse_date_any(v):
 
 
 def fmt_date_br(d: date | None) -> str:
+    """Formata data no padrão brasileiro"""
     if not d:
         return ""
     return d.strftime("%d/%m/%Y")
 
 
 def format_cpf(cpf_value) -> str:
+    """Formata CPF com pontos e traço"""
     d = only_digits(cpf_value)
     if len(d) != 11:
         return str(cpf_value or "").strip()
@@ -203,10 +214,11 @@ def format_cpf(cpf_value) -> str:
 
 
 def cpf_valido(cpf) -> bool:
+    """Valida CPF usando algoritmo oficial"""
     cpf = only_digits(cpf)
     if len(cpf) != 11:
         return False
-    if cpf == cpf[0] * 11:
+    if cpf == cpf[0] * 11:  # CPF com todos dígitos iguais
         return False
 
     def calc_dv(cpf_base: str, pesos: list[int]) -> str:
@@ -223,10 +235,12 @@ def cpf_valido(cpf) -> bool:
 
 
 def phone_valido(value) -> bool:
+    """Valida se telefone tem 11 dígitos"""
     return len(only_digits(value)) == 11
 
 
 def format_phone_br(value) -> str:
+    """Formata telefone no padrão brasileiro"""
     d = only_digits(value)
     if len(d) != 11:
         return str(value or "").strip()
@@ -240,31 +254,39 @@ def format_phone_br(value) -> str:
 # =========================
 @st.cache_data(show_spinner=False, ttl=30)
 def load_sheet_df(spreadsheet_id: str, gid: int) -> pd.DataFrame:
+    """Carrega dados da planilha com cache de 30 segundos"""
     client = get_gspread_client()
     if client is None:
         return pd.DataFrame()
 
-    ws = open_worksheet_by_gid(client, spreadsheet_id, gid)
-    values = ws.get_all_values()
-
-    if not values:
-        ws.append_row(REQUIRED_COLS[:], value_input_option="USER_ENTERED")
+    try:
+        ws = open_worksheet_by_gid(client, spreadsheet_id, gid)
         values = ws.get_all_values()
 
-    header = values[0]
-    rows = values[1:]
-    df = pd.DataFrame(rows, columns=header)
+        if not values:
+            ws.append_row(REQUIRED_COLS[:], value_input_option="USER_ENTERED")
+            values = ws.get_all_values()
 
-    for c in REQUIRED_COLS:
-        if c not in df.columns:
-            df[c] = ""
+        header = values[0]
+        rows = values[1:]
+        df = pd.DataFrame(rows, columns=header)
 
-    df["_data_nasc_date"] = df["data_nasc"].apply(parse_date_any)
-    df["_sheet_row"] = df.index + 2
-    return df
+        # Garante que todas as colunas necessárias existem
+        for c in REQUIRED_COLS:
+            if c not in df.columns:
+                df[c] = ""
+
+        # Parse de datas e índice de linha
+        df["_data_nasc_date"] = df["data_nasc"].apply(parse_date_any)
+        df["_sheet_row"] = df.index + 2
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar planilha: {str(e)}")
+        return pd.DataFrame()
 
 
 def ensure_header_columns(ws, df: pd.DataFrame):
+    """Garante que todas as colunas necessárias existem no header"""
     header = ws.row_values(1)
     need_add = [c for c in REQUIRED_COLS if c not in header]
     if need_add:
@@ -275,11 +297,12 @@ def ensure_header_columns(ws, df: pd.DataFrame):
 
 
 def build_options_from_df(df: pd.DataFrame, field: str) -> list[str]:
+    """Constrói lista de opções únicas a partir dos dados existentes"""
     series = df.get(field, pd.Series([], dtype=str)).fillna("").astype(str).map(lambda x: x.strip())
     vals = [x for x in series.tolist() if x and x.lower() != "nan"]
     uniq = sorted(set(vals), key=lambda x: x.casefold())
 
-    # defaults para não ficar vazio
+    # Opções padrão para evitar listas vazias
     if field == "nacionalidade":
         defaults = ["BRASILEIRA", "BRASILEIRO", "OUTRA"]
         for d in defaults:
@@ -299,6 +322,7 @@ def build_options_from_df(df: pd.DataFrame, field: str) -> list[str]:
 
 
 def find_matches(df: pd.DataFrame, dn: date, mae: str) -> pd.DataFrame:
+    """Busca registros por data de nascimento e primeiro nome da mãe"""
     mae_first = first_token(mae)
     if not mae_first:
         return df.iloc[0:0].copy()
@@ -308,6 +332,7 @@ def find_matches(df: pd.DataFrame, dn: date, mae: str) -> pd.DataFrame:
 
 
 def gspread_a1(r1, c1, r2, c2):
+    """Converte coordenadas numéricas para notação A1"""
     def col_to_a1(n):
         s = ""
         while n:
@@ -318,6 +343,7 @@ def gspread_a1(r1, c1, r2, c2):
 
 
 def update_row_in_sheet(ws, sheet_row: int, header: list[str], payload: dict):
+    """Atualiza linha existente na planilha"""
     row_values = ws.row_values(sheet_row)
     if len(row_values) < len(header):
         row_values = row_values + [""] * (len(header) - len(row_values))
@@ -335,11 +361,13 @@ def update_row_in_sheet(ws, sheet_row: int, header: list[str], payload: dict):
 
 
 def append_row_in_sheet(ws, header: list[str], payload: dict):
+    """Adiciona nova linha na planilha"""
     row = [clean_cell(payload.get(c, "")) for c in header]
     ws.append_row(row, value_input_option="USER_ENTERED")
 
 
 def next_membro_id(df: pd.DataFrame) -> int:
+    """Gera próximo ID de membro"""
     s = df.get("membro_id", pd.Series([], dtype=str)).fillna("").astype(str).map(lambda x: only_digits(x))
     nums = pd.to_numeric(s, errors="coerce")
     if nums.notna().any():
@@ -348,6 +376,7 @@ def next_membro_id(df: pd.DataFrame) -> int:
 
 
 def validate_required(payload: dict) -> list[str]:
+    """Valida campos obrigatórios"""
     missing = []
     for k, label in REQUIRED_FIELDS.items():
         v = payload.get(k, "")
@@ -376,6 +405,8 @@ st.markdown(
   --shadow: 0 10px 20px rgba(2, 6, 23, .08);
   --danger:#DC2626;
   --dangerSoft:#FEE2E2;
+  --success:#10B981;
+  --successSoft:#D1FAE5;
 }
 .main, .stApp{
   background: linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 55%, #E0F2FE 100%);
@@ -427,12 +458,22 @@ div.stButton>button{
   font-size: 1.05rem;
   width:100%;
   box-shadow: var(--shadow);
+  transition: all 0.2s ease;
+}
+div.stButton>button:hover{
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(2, 6, 23, .12);
 }
 .stTextInput input, .stSelectbox select, .stDateInput input{
   border-radius: 12px !important;
   border: 2px solid #BFDBFE !important;
   padding: 12px !important;
   font-size: 1rem !important;
+  transition: border-color 0.2s ease !important;
+}
+.stTextInput input:focus, .stSelectbox select:focus, .stDateInput input:focus{
+  border-color: var(--blue) !important;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1) !important;
 }
 hr{
   border: none;
@@ -469,7 +510,7 @@ hr{
     unsafe_allow_html=True,
 )
 
-# Logo pequena dentro do retângulo
+# Logo dentro do header
 logo_html = ""
 if os.path.exists(LOGO_PATH):
     import base64
@@ -494,15 +535,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Carrega dados
 with st.spinner("Carregando base da igreja..."):
     df = load_sheet_df(SPREADSHEET_ID, WORKSHEET_GID)
 
 if df.empty:
+    st.error("Não foi possível carregar os dados. Verifique a conexão com a planilha.")
     st.stop()
 
+# Constrói opções de dropdown
 dropdown_opts = {f: build_options_from_df(df, f) for f in DROPDOWN_FIELDS}
 
-# Estado
+# Estado da sessão
 if "searched" not in st.session_state:
     st.session_state.searched = False
 if "match_ids" not in st.session_state:
@@ -514,6 +558,7 @@ if "search_mae" not in st.session_state:
 
 
 def field_block(label: str, missing: bool, *, render_fn):
+    """Renderiza campo com destaque se obrigatório e vazio"""
     if missing:
         st.markdown(
             f"<div class='miss-wrap'><p class='miss-label'>{label} obrigatório</p></div>",
@@ -523,9 +568,15 @@ def field_block(label: str, missing: bool, *, render_fn):
 
 
 def dropdown_only(label, field_name, current_value="", key_prefix="x"):
+    """Renderiza dropdown com opções dinâmicas"""
     opts = dropdown_opts.get(field_name, []) or ["OUTRO"]
-    cur = str(current_value or "").strip()
-    idx = opts.index(cur) if cur in opts else 0
+    cur = str(current_value or "").strip().upper()
+    
+    # Tenta encontrar índice exato ou similar
+    idx = 0
+    if cur and cur in opts:
+        idx = opts.index(cur)
+    
     return st.selectbox(
         label,
         options=opts,
@@ -535,6 +586,7 @@ def dropdown_only(label, field_name, current_value="", key_prefix="x"):
 
 
 def render_found_card(d: dict, total: int):
+    """Renderiza card com informações do cadastro encontrado"""
     dn = parse_date_any(d.get("data_nasc", "")) or st.session_state.search_dn
     mae = clean_cell(d.get("nome_mae", "")) or st.session_state.search_mae
     nome = clean_cell(d.get("nome_completo", "")) or "(Sem nome)"
@@ -578,25 +630,29 @@ with col1:
         min_value=date(1900, 1, 1),
         max_value=date.today(),
         format="DD/MM/YYYY",
+        help="Selecione sua data de nascimento"
     )
 with col2:
     inp_mae = st.text_input(
         "Nome da mãe",
         value=st.session_state.search_mae,
         placeholder="Ex.: Maria",
+        help="Digite apenas o primeiro nome"
     )
 
 if st.button("Buscar cadastro"):
     if inp_dn is None:
-        st.warning("Escolha a data de nascimento.")
+        st.warning("⚠️ Escolha a data de nascimento.")
     elif not inp_mae.strip():
-        st.warning("Digite o nome da mãe.")
+        st.warning("⚠️ Digite o nome da mãe.")
     else:
-        matches = find_matches(df, inp_dn, inp_mae)
-        st.session_state.searched = True
-        st.session_state.search_dn = inp_dn
-        st.session_state.search_mae = inp_mae.strip()
-        st.session_state.match_ids = matches.index.tolist()
+        with st.spinner("Buscando..."):
+            matches = find_matches(df, inp_dn, inp_mae)
+            st.session_state.searched = True
+            st.session_state.search_dn = inp_dn
+            st.session_state.search_mae = inp_mae.strip()
+            st.session_state.match_ids = matches.index.tolist()
+            st.rerun()
 
 st.divider()
 
@@ -627,81 +683,136 @@ if len(match_ids) == 0:
         unsafe_allow_html=True,
     )
 
-    with st.form("novo_cadastro"):
+    with st.form("novo_cadastro", clear_on_submit=False):
         dn_val = st.session_state.search_dn
         mae_val = st.session_state.search_mae
 
-        # Ordem: Nome, Data, CPF
-        field_block("Nome completo", missing=True, render_fn=lambda: None)
-        nome_completo = st.text_input("Nome completo", value="", key="new_nome")
+        # Campos principais
+        st.markdown("### Dados pessoais")
+        
+        nome_completo = st.text_input(
+            "Nome completo *",
+            value="",
+            key="new_nome",
+            placeholder="Digite seu nome completo"
+        )
 
-        field_block(
-            "Data de nascimento",
-            missing=(dn_val is None),
-            render_fn=lambda: st.date_input(
-                "Data de nascimento",
+        col_dn, col_cpf = st.columns(2)
+        with col_dn:
+            data_nasc = st.date_input(
+                "Data de nascimento *",
                 value=dn_val,
                 min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 format="DD/MM/YYYY",
                 key="new_dn"
-            ),
+            )
+        with col_cpf:
+            cpf_raw = st.text_input(
+                "CPF *",
+                value="",
+                placeholder="000.000.000-00",
+                key="new_cpf",
+                max_chars=14
+            )
+
+        whatsapp_raw = st.text_input(
+            "WhatsApp/Telefone *",
+            value="",
+            placeholder="(88) 9.9999-9999",
+            key="new_whats",
+            max_chars=15
         )
 
-        field_block("CPF", missing=True, render_fn=lambda: None)
-        cpf_raw = st.text_input("CPF", value="", placeholder="000.000.000-00", key="new_cpf")
+        st.markdown("### Endereço")
+        
+        bairro = st.selectbox(
+            "Bairro/Distrito *",
+            options=BAIRROS_DISTRITOS,
+            index=0,
+            key="new_bairro"
+        )
 
-        field_block("WhatsApp/Telefone", missing=True, render_fn=lambda: None)
-        whatsapp_raw = st.text_input("WhatsApp/Telefone", value="", placeholder="(88) 9.9999-9999", key="new_whats")
+        endereco = st.text_input(
+            "Endereço completo *",
+            value="",
+            key="new_endereco",
+            placeholder="Rua, número, complemento"
+        )
 
-        field_block("Bairro/Distrito", missing=True, render_fn=lambda: None)
-        bairro = st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=0, key="new_bairro")
-
-        field_block("Endereço", missing=True, render_fn=lambda: None)
-        endereco = st.text_input("Endereço", value="", key="new_endereco")
-
-        st.markdown("#### Pais")
-        colA, colB = st.columns(2)
-        with colA:
-            field_block(
-                "Nome da mãe",
-                missing=(is_missing(mae_val)),
-                render_fn=lambda: st.text_input("Nome da mãe", value=mae_val, key="new_mae"),
+        st.markdown("### Filiação")
+        
+        col_mae, col_pai = st.columns(2)
+        with col_mae:
+            nome_mae = st.text_input(
+                "Nome da mãe *",
+                value=mae_val,
+                key="new_mae"
             )
-        with colB:
-            nome_pai = st.text_input("Nome do pai", value="", key="new_pai")
+        with col_pai:
+            nome_pai = st.text_input(
+                "Nome do pai",
+                value="",
+                key="new_pai"
+            )
 
-        naturalidade = st.text_input("Naturalidade", value="", key="new_naturalidade")
+        st.markdown("### Dados complementares")
+        
+        col_nat, col_nac = st.columns(2)
+        with col_nat:
+            naturalidade = st.text_input(
+                "Naturalidade",
+                value="",
+                key="new_naturalidade",
+                placeholder="Cidade de nascimento"
+            )
+        with col_nac:
+            nacionalidade = dropdown_only(
+                "Nacionalidade",
+                "nacionalidade",
+                "",
+                key_prefix="new"
+            )
 
-        # Apenas dropdown, sem duplicar
-        nacionalidade = dropdown_only("Nacionalidade", "nacionalidade", "", key_prefix="new")
+        estado_civil = dropdown_only(
+            "Estado civil *",
+            "estado_civil",
+            "",
+            key_prefix="new"
+        )
 
-        field_block("Estado civil", missing=True, render_fn=lambda: None)
-        estado_civil = dropdown_only("Estado civil", "estado_civil", "", key_prefix="new")
-
-        data_batismo = st.text_input("Data do batismo", value="", placeholder="Ex.: 05/12/1992", key="new_batismo")
-
-        field_block("Congregação", missing=True, render_fn=lambda: None)
-        congregacao = dropdown_only("Congregação", "congregacao", "", key_prefix="new")
+        col_batismo, col_cong = st.columns(2)
+        with col_batismo:
+            data_batismo = st.text_input(
+                "Data do batismo",
+                value="",
+                placeholder="Ex.: 05/12/1992",
+                key="new_batismo"
+            )
+        with col_cong:
+            congregacao = dropdown_only(
+                "Congregação *",
+                "congregacao",
+                "",
+                key_prefix="new"
+            )
 
         st.markdown("---")
-        salvar = st.form_submit_button("Salvar novo cadastro")
+        st.markdown("**Campos marcados com * são obrigatórios**", help="Preencha todos os campos obrigatórios")
+        
+        salvar = st.form_submit_button("✓ Salvar novo cadastro", use_container_width=True)
 
         if salvar:
-            dn_form = st.session_state.get("new_dn")
-            mae_form = st.session_state.get("new_mae", "").strip()
-
             cpf_digits = only_digits(cpf_raw)
             phone_digits = only_digits(whatsapp_raw)
-
             now_str = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
             novo_id = next_membro_id(df)
 
             payload = {
                 "membro_id": str(novo_id),
                 "cod_membro": "",
-                "data_nasc": fmt_date_br(dn_form) if dn_form else "",
-                "nome_mae": mae_form,
+                "data_nasc": fmt_date_br(data_nasc) if data_nasc else "",
+                "nome_mae": nome_mae.strip(),
                 "nome_completo": nome_completo.strip(),
                 "cpf": format_cpf(cpf_digits),
                 "whatsapp_telefone": format_phone_br(phone_digits),
@@ -716,27 +827,39 @@ if len(match_ids) == 0:
                 "atualizado": now_str,
             }
 
+            # Validações
             missing_list = validate_required(payload)
             if missing_list:
-                st.error("Preencha os campos obrigatórios: " + ", ".join(missing_list) + ".")
+                st.error(f"❌ Preencha os campos obrigatórios: {', '.join(missing_list)}")
                 st.stop()
 
             if not cpf_valido(cpf_digits):
-                st.error("CPF inválido. Confira e tente de novo.")
+                st.error("❌ CPF inválido. Confira e tente de novo.")
                 st.stop()
 
             if not phone_valido(phone_digits):
-                st.error("WhatsApp inválido. Precisa ter 11 números.")
+                st.error("❌ WhatsApp inválido. Precisa ter 11 números (DDD + número).")
                 st.stop()
 
-            append_row_in_sheet(ws, header, payload)
-
-            st.cache_data.clear()
-            st.session_state.searched = False
-            st.session_state.match_ids = []
-            st.session_state.search_dn = None
-            st.session_state.search_mae = ""
-            st.rerun()
+            # Salva
+            try:
+                with st.spinner("Salvando cadastro..."):
+                    append_row_in_sheet(ws, header, payload)
+                    st.cache_data.clear()
+                    
+                st.success(f"✅ Cadastro salvo com sucesso! ID: {novo_id}")
+                st.balloons()
+                
+                # Reset e rerun após 2 segundos
+                import time
+                time.sleep(2)
+                st.session_state.searched = False
+                st.session_state.match_ids = []
+                st.session_state.search_dn = None
+                st.session_state.search_mae = ""
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao salvar: {str(e)}")
 
     st.stop()
 
@@ -746,6 +869,7 @@ if len(match_ids) == 0:
 matches_df = df.loc[match_ids].copy()
 total_found = len(matches_df)
 
+# Seleção de múltiplos registros
 if total_found > 1:
     matches_df = matches_df.sort_values(by=["nome_completo"], na_position="last")
     options = []
@@ -754,7 +878,12 @@ if total_found > 1:
         cong = clean_cell(r.get("congregacao", ""))
         options.append((idx, f"{nome} | {cong}" if cong else nome))
 
-    sel = st.selectbox("Selecione o membro", options=options, format_func=lambda x: x[1])
+    sel = st.selectbox(
+        "Selecione o membro",
+        options=options,
+        format_func=lambda x: x[1],
+        help="Encontramos mais de um registro. Selecione o correto."
+    )
     sel_idx = sel[0]
 else:
     sel_idx = matches_df.index[0]
@@ -769,99 +898,130 @@ bairro_current = clean_cell(row.get("bairro_distrito", ""))
 bairro_index = BAIRROS_DISTRITOS.index(bairro_current) if bairro_current in BAIRROS_DISTRITOS else 0
 row_dn = parse_date_any(row.get("data_nasc", ""))
 
-with st.form("editar_cadastro"):
-    # Ordem: Nome, Data, CPF
-    field_block(
-        "Nome completo",
-        missing=is_missing(row.get("nome_completo", "")),
-        render_fn=lambda: st.text_input("Nome completo", value=clean_cell(row.get("nome_completo", "")), key="edit_nome"),
+with st.form("editar_cadastro", clear_on_submit=False):
+    st.markdown("### Dados pessoais")
+    
+    nome_completo = st.text_input(
+        "Nome completo *",
+        value=clean_cell(row.get("nome_completo", "")),
+        key="edit_nome"
     )
 
-    field_block(
-        "Data de nascimento",
-        missing=(row_dn is None),
-        render_fn=lambda: st.date_input(
-            "Data de nascimento",
+    col_dn, col_cpf = st.columns(2)
+    with col_dn:
+        data_nasc = st.date_input(
+            "Data de nascimento *",
             value=row_dn,
             min_value=date(1900, 1, 1),
             max_value=date.today(),
             format="DD/MM/YYYY",
             key="edit_dn"
-        ),
-    )
-
-    field_block(
-        "CPF",
-        missing=is_missing(row.get("cpf", "")),
-        render_fn=lambda: st.text_input("CPF", value=format_cpf(row.get("cpf", "")), placeholder="000.000.000-00", key="edit_cpf"),
-    )
-
-    field_block(
-        "WhatsApp/Telefone",
-        missing=is_missing(row.get("whatsapp_telefone", "")),
-        render_fn=lambda: st.text_input("WhatsApp/Telefone", value=format_phone_br(row.get("whatsapp_telefone", "")), placeholder="(88) 9.9999-9999", key="edit_whats"),
-    )
-
-    field_block(
-        "Bairro/Distrito",
-        missing=is_missing(row.get("bairro_distrito", "")),
-        render_fn=lambda: st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=bairro_index, key="edit_bairro"),
-    )
-
-    field_block(
-        "Endereço",
-        missing=is_missing(row.get("endereco", "")),
-        render_fn=lambda: st.text_input("Endereço", value=clean_cell(row.get("endereco", "")), key="edit_endereco"),
-    )
-
-    st.markdown("#### Pais")
-    colA, colB = st.columns(2)
-    with colA:
-        field_block(
-            "Nome da mãe",
-            missing=is_missing(row.get("nome_mae", "")),
-            render_fn=lambda: st.text_input("Nome da mãe", value=clean_cell(row.get("nome_mae", "")), key="edit_mae"),
         )
-    with colB:
-        nome_pai = st.text_input("Nome do pai", value=clean_cell(row.get("nome_pai", "")), key="edit_pai")
+    with col_cpf:
+        cpf_input = st.text_input(
+            "CPF *",
+            value=format_cpf(row.get("cpf", "")),
+            placeholder="000.000.000-00",
+            key="edit_cpf",
+            max_chars=14
+        )
 
-    naturalidade = st.text_input("Naturalidade", value=clean_cell(row.get("naturalidade", "")), key="edit_naturalidade")
+    whatsapp_input = st.text_input(
+        "WhatsApp/Telefone *",
+        value=format_phone_br(row.get("whatsapp_telefone", "")),
+        placeholder="(88) 9.9999-9999",
+        key="edit_whats",
+        max_chars=15
+    )
 
-    # Apenas dropdown, sem duplicar
-    nacionalidade = dropdown_only("Nacionalidade", "nacionalidade", row.get("nacionalidade", ""), key_prefix="edit")
+    st.markdown("### Endereço")
+    
+    bairro = st.selectbox(
+        "Bairro/Distrito *",
+        options=BAIRROS_DISTRITOS,
+        index=bairro_index,
+        key="edit_bairro"
+    )
 
-    field_block("Estado civil", missing=is_missing(row.get("estado_civil", "")), render_fn=lambda: None)
-    estado_civil = dropdown_only("Estado civil", "estado_civil", row.get("estado_civil", ""), key_prefix="edit")
+    endereco = st.text_input(
+        "Endereço completo *",
+        value=clean_cell(row.get("endereco", "")),
+        key="edit_endereco"
+    )
 
-    data_batismo = st.text_input("Data do batismo", value=clean_cell(row.get("data_batismo", "")), key="edit_batismo")
+    st.markdown("### Filiação")
+    
+    col_mae, col_pai = st.columns(2)
+    with col_mae:
+        nome_mae = st.text_input(
+            "Nome da mãe *",
+            value=clean_cell(row.get("nome_mae", "")),
+            key="edit_mae"
+        )
+    with col_pai:
+        nome_pai = st.text_input(
+            "Nome do pai",
+            value=clean_cell(row.get("nome_pai", "")),
+            key="edit_pai"
+        )
 
-    field_block("Congregação", missing=is_missing(row.get("congregacao", "")), render_fn=lambda: None)
-    congregacao = dropdown_only("Congregação", "congregacao", row.get("congregacao", ""), key_prefix="edit")
+    st.markdown("### Dados complementares")
+    
+    col_nat, col_nac = st.columns(2)
+    with col_nat:
+        naturalidade = st.text_input(
+            "Naturalidade",
+            value=clean_cell(row.get("naturalidade", "")),
+            key="edit_naturalidade"
+        )
+    with col_nac:
+        nacionalidade = dropdown_only(
+            "Nacionalidade",
+            "nacionalidade",
+            row.get("nacionalidade", ""),
+            key_prefix="edit"
+        )
+
+    estado_civil = dropdown_only(
+        "Estado civil *",
+        "estado_civil",
+        row.get("estado_civil", ""),
+        key_prefix="edit"
+    )
+
+    col_batismo, col_cong = st.columns(2)
+    with col_batismo:
+        data_batismo = st.text_input(
+            "Data do batismo",
+            value=clean_cell(row.get("data_batismo", "")),
+            key="edit_batismo"
+        )
+    with col_cong:
+        congregacao = dropdown_only(
+            "Congregação *",
+            "congregacao",
+            row.get("congregacao", ""),
+            key_prefix="edit"
+        )
 
     st.markdown("---")
-    salvar = st.form_submit_button("Salvar atualização")
+    st.markdown("**Campos marcados com * são obrigatórios**")
+    
+    salvar = st.form_submit_button("✓ Salvar atualização", use_container_width=True)
 
     if salvar:
-        nome_form = st.session_state.get("edit_nome", "").strip()
-        dn_form = st.session_state.get("edit_dn")
-        cpf_form = st.session_state.get("edit_cpf", "")
-        whats_form = st.session_state.get("edit_whats", "")
-        bairro_form = st.session_state.get("edit_bairro", "")
-        endereco_form = st.session_state.get("edit_endereco", "").strip()
-        mae_form = st.session_state.get("edit_mae", "").strip()
-
-        cpf_digits = only_digits(cpf_form)
-        phone_digits = only_digits(whats_form)
+        cpf_digits = only_digits(cpf_input)
+        phone_digits = only_digits(whatsapp_input)
         now_str = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
 
         payload = {
-            "nome_completo": nome_form,
-            "data_nasc": fmt_date_br(dn_form) if dn_form else "",
+            "nome_completo": nome_completo.strip(),
+            "data_nasc": fmt_date_br(data_nasc) if data_nasc else "",
             "cpf": format_cpf(cpf_digits),
             "whatsapp_telefone": format_phone_br(phone_digits),
-            "bairro_distrito": bairro_form,
-            "endereco": endereco_form,
-            "nome_mae": mae_form,
+            "bairro_distrito": bairro,
+            "endereco": endereco.strip(),
+            "nome_mae": nome_mae.strip(),
             "nome_pai": nome_pai.strip(),
             "nacionalidade": nacionalidade,
             "naturalidade": naturalidade.strip(),
@@ -871,24 +1031,36 @@ with st.form("editar_cadastro"):
             "atualizado": now_str,
         }
 
+        # Validações
         missing_list = validate_required(payload)
         if missing_list:
-            st.error("Preencha os campos obrigatórios: " + ", ".join(missing_list) + ".")
+            st.error(f"❌ Preencha os campos obrigatórios: {', '.join(missing_list)}")
             st.stop()
 
         if not cpf_valido(cpf_digits):
-            st.error("CPF inválido. Confira e tente de novo.")
+            st.error("❌ CPF inválido. Confira e tente de novo.")
             st.stop()
 
         if not phone_valido(phone_digits):
-            st.error("WhatsApp inválido. Precisa ter 11 números.")
+            st.error("❌ WhatsApp inválido. Precisa ter 11 números (DDD + número).")
             st.stop()
 
-        update_row_in_sheet(ws, sheet_row, header, payload)
-
-        st.cache_data.clear()
-        st.session_state.searched = False
-        st.session_state.match_ids = []
-        st.session_state.search_dn = None
-        st.session_state.search_mae = ""
-        st.rerun()
+        # Salva
+        try:
+            with st.spinner("Salvando alterações..."):
+                update_row_in_sheet(ws, sheet_row, header, payload)
+                st.cache_data.clear()
+                
+            st.success("✅ Cadastro atualizado com sucesso!")
+            st.balloons()
+            
+            # Reset e rerun após 2 segundos
+            import time
+            time.sleep(2)
+            st.session_state.searched = False
+            st.session_state.match_ids = []
+            st.session_state.search_dn = None
+            st.session_state.search_mae = ""
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro ao salvar: {str(e)}")
