@@ -587,12 +587,20 @@ def dropdown_only(label, field_name, current_value="", key_prefix="x"):
 
 def render_found_card(d: dict, total: int):
     """Renderiza card com informações do cadastro encontrado"""
+    import html as html_module
+    
     dn = parse_date_any(d.get("data_nasc", "")) or st.session_state.search_dn
     mae = clean_cell(d.get("nome_mae", "")) or st.session_state.search_mae
     nome = clean_cell(d.get("nome_completo", "")) or "(Sem nome)"
     cong = clean_cell(d.get("congregacao", ""))
+    
+    # Escape HTML para evitar problemas com caracteres especiais
+    mae_escaped = html_module.escape(mae)
+    nome_escaped = html_module.escape(nome)
+    cong_escaped = html_module.escape(cong) if cong else "sem informação"
+    data_escaped = html_module.escape(fmt_date_br(dn) if dn else "")
 
-    html = f"""
+    html_content = f"""
     <div class="card">
       <div class="section">Cadastro encontrado</div>
       <div class="small">Achamos {total} registro(s). Selecione e atualize.</div>
@@ -600,21 +608,21 @@ def render_found_card(d: dict, total: int):
       <div style="margin-top:12px;">
         <div class="small"><b>Data de nascimento</b></div>
         <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:10px;">
-          {fmt_date_br(dn) if dn else ""}
+          {data_escaped}
         </div>
 
         <div class="small"><b>Nome da mãe</b></div>
         <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:12px;">
-          {mae}
+          {mae_escaped}
         </div>
 
         <div class="small"><b>Nome</b></div>
-        <div class="found-name">{nome}</div>
-        <div class="cong-muted">Congregação: {cong if cong else "sem informação"}</div>
+        <div class="found-name">{nome_escaped}</div>
+        <div class="cong-muted">Congregação: {cong_escaped}</div>
       </div>
     </div>
     """
-    st.markdown(textwrap.dedent(html).strip(), unsafe_allow_html=True)
+    st.markdown(textwrap.dedent(html_content).strip(), unsafe_allow_html=True)
 
 
 # =========================
