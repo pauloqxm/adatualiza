@@ -454,7 +454,18 @@ hr{
   margin-top:10px;
   font-weight:900;
   color: var(--blue2);
-  font-size: 1.05rem;
+  font-size: 1.15rem;
+}
+.found-cong{
+  margin-top:4px;
+  font-weight:700;
+  color: rgba(255,255,255,.0);
+}
+.cong-muted{
+  margin-top: 6px;
+  font-size: .92rem;
+  font-weight: 700;
+  color: #64748B;
 }
 </style>
 """,
@@ -527,16 +538,29 @@ def render_found_card(d: dict, total: int):
     dn = parse_date_any(d.get("data_nasc", "")) or st.session_state.search_dn
     mae = clean_cell(d.get("nome_mae", "")) or st.session_state.search_mae
     nome = clean_cell(d.get("nome_completo", "")) or "(Sem nome)"
+    cong = clean_cell(d.get("congregacao", ""))
 
     st.markdown(
         f"""
 <div class="card">
   <div class="section">Cadastro encontrado</div>
   <div class="small">Achamos {total} registro(s). Selecione e atualize.</div>
-  <hr/>
-  <div class="small"><b>Data de nascimento:</b> {fmt_date_br(dn) if dn else ""}</div>
-  <div class="small"><b>Nome da mãe:</b> {mae}</div>
-  <div class="found-name">{nome}</div>
+
+  <div style="margin-top:12px;">
+    <div class="small"><b>Data de nascimento</b></div>
+    <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:10px;">
+      {fmt_date_br(dn) if dn else ""}
+    </div>
+
+    <div class="small"><b>Nome da mãe</b></div>
+    <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:12px;">
+      {mae}
+    </div>
+
+    <div class="small"><b>Nome</b></div>
+    <div class="found-name">{nome}</div>
+    {f"<div class='cong-muted'>Congregação: {cong}</div>" if cong else "<div class='cong-muted'>Congregação: sem informação</div>"}
+  </div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -606,6 +630,10 @@ if len(match_ids) == 0:
         dn_val = st.session_state.search_dn
         mae_val = st.session_state.search_mae
 
+        # Ordem: Nome, Data, CPF
+        field_block("Nome completo", missing=True, render_fn=lambda: None)
+        nome_completo = st.text_input("Nome completo", value="", key="new_nome")
+
         field_block(
             "Data de nascimento",
             missing=(dn_val is None),
@@ -618,14 +646,6 @@ if len(match_ids) == 0:
                 key="new_dn"
             ),
         )
-        field_block(
-            "Nome da mãe",
-            missing=(clean_cell(mae_val) == ""),
-            render_fn=lambda: st.text_input("Nome da mãe", value=mae_val, key="new_mae"),
-        )
-
-        field_block("Nome completo", missing=True, render_fn=lambda: None)
-        nome_completo = st.text_input("Nome completo", value="", key="new_nome")
 
         field_block("CPF", missing=True, render_fn=lambda: None)
         cpf_raw = st.text_input("CPF", value="", placeholder="000.000.000-00", key="new_cpf")
@@ -639,7 +659,17 @@ if len(match_ids) == 0:
         field_block("Endereço", missing=True, render_fn=lambda: None)
         endereco = st.text_input("Endereço", value="", key="new_endereco")
 
-        nome_pai = st.text_input("Nome do pai", value="", key="new_pai")
+        st.markdown("#### Pais")
+        colA, colB = st.columns(2)
+        with colA:
+            field_block(
+                "Nome da mãe",
+                missing=(is_missing(mae_val)),
+                render_fn=lambda: st.text_input("Nome da mãe", value=mae_val, key="new_mae"),
+            )
+        with colB:
+            nome_pai = st.text_input("Nome do pai", value="", key="new_pai")
+
         naturalidade = st.text_input("Naturalidade", value="", key="new_naturalidade")
         nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", "", key_prefix="new")
 
@@ -726,7 +756,6 @@ if total_found > 1:
 else:
     sel_idx = matches_df.index[0]
 
-# Card mostrando DN, mãe e nome do selecionado
 row_preview = df.loc[sel_idx].to_dict()
 render_found_card(row_preview, total_found)
 
@@ -738,6 +767,13 @@ bairro_index = BAIRROS_DISTRITOS.index(bairro_current) if bairro_current in BAIR
 row_dn = parse_date_any(row.get("data_nasc", ""))
 
 with st.form("editar_cadastro"):
+    # Ordem: Nome, Data, CPF
+    field_block(
+        "Nome completo",
+        missing=is_missing(row.get("nome_completo", "")),
+        render_fn=lambda: st.text_input("Nome completo", value=clean_cell(row.get("nome_completo", "")), key="edit_nome"),
+    )
+
     field_block(
         "Data de nascimento",
         missing=(row_dn is None),
@@ -749,17 +785,6 @@ with st.form("editar_cadastro"):
             format="DD/MM/YYYY",
             key="edit_dn"
         ),
-    )
-    field_block(
-        "Nome da mãe",
-        missing=is_missing(row.get("nome_mae", "")),
-        render_fn=lambda: st.text_input("Nome da mãe", value=clean_cell(row.get("nome_mae", "")), key="edit_mae"),
-    )
-
-    field_block(
-        "Nome completo",
-        missing=is_missing(row.get("nome_completo", "")),
-        render_fn=lambda: st.text_input("Nome completo", value=clean_cell(row.get("nome_completo", "")), key="edit_nome"),
     )
 
     field_block(
@@ -786,7 +811,17 @@ with st.form("editar_cadastro"):
         render_fn=lambda: st.text_input("Endereço", value=clean_cell(row.get("endereco", "")), key="edit_endereco"),
     )
 
-    nome_pai = st.text_input("Nome do pai", value=clean_cell(row.get("nome_pai", "")), key="edit_pai")
+    st.markdown("#### Pais")
+    colA, colB = st.columns(2)
+    with colA:
+        field_block(
+            "Nome da mãe",
+            missing=is_missing(row.get("nome_mae", "")),
+            render_fn=lambda: st.text_input("Nome da mãe", value=clean_cell(row.get("nome_mae", "")), key="edit_mae"),
+        )
+    with colB:
+        nome_pai = st.text_input("Nome do pai", value=clean_cell(row.get("nome_pai", "")), key="edit_pai")
+
     naturalidade = st.text_input("Naturalidade", value=clean_cell(row.get("naturalidade", "")), key="edit_naturalidade")
     nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", row.get("nacionalidade", ""), key_prefix="edit")
 
@@ -802,26 +837,26 @@ with st.form("editar_cadastro"):
     salvar = st.form_submit_button("Salvar atualização")
 
     if salvar:
-        dn_form = st.session_state.get("edit_dn")
-        mae_form = st.session_state.get("edit_mae", "").strip()
         nome_form = st.session_state.get("edit_nome", "").strip()
+        dn_form = st.session_state.get("edit_dn")
         cpf_form = st.session_state.get("edit_cpf", "")
         whats_form = st.session_state.get("edit_whats", "")
         bairro_form = st.session_state.get("edit_bairro", "")
         endereco_form = st.session_state.get("edit_endereco", "").strip()
+        mae_form = st.session_state.get("edit_mae", "").strip()
 
         cpf_digits = only_digits(cpf_form)
         phone_digits = only_digits(whats_form)
         now_str = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
 
         payload = {
-            "data_nasc": fmt_date_br(dn_form) if dn_form else "",
-            "nome_mae": mae_form,
             "nome_completo": nome_form,
+            "data_nasc": fmt_date_br(dn_form) if dn_form else "",
             "cpf": format_cpf(cpf_digits),
             "whatsapp_telefone": format_phone_br(phone_digits),
             "bairro_distrito": bairro_form,
             "endereco": endereco_form,
+            "nome_mae": mae_form,
             "nome_pai": nome_pai.strip(),
             "nacionalidade": nacionalidade,
             "naturalidade": naturalidade.strip(),
