@@ -10,7 +10,7 @@ import streamlit as st
 # =========================
 # Config geral
 # =========================
-APP_TITLE = "📘 Atualização de Cadastro da Igreja"
+APP_TITLE = "Atualização de Cadastro da Igreja"
 TZ = ZoneInfo("America/Fortaleza")
 
 LOGO_PATH = os.path.join("data", "logo_ad.jpg")
@@ -39,6 +39,19 @@ REQUIRED_COLS = [
     "atualizado",
 ]
 
+# Obrigatórios no formulário
+REQUIRED_FIELDS = {
+    "nome_completo": "Nome completo",
+    "cpf": "CPF",
+    "data_nasc": "Data de nascimento",
+    "whatsapp_telefone": "WhatsApp/Telefone",
+    "bairro_distrito": "Bairro/Distrito",
+    "endereco": "Endereço",
+    "nome_mae": "Nome da mãe",
+    "estado_civil": "Estado civil",
+    "congregacao": "Congregação",
+}
+
 # Lista fixa do Bairro/Distrito
 BAIRROS_DISTRITOS = [
     "Argentina Siqueira", "Belém", "Berilândia", "Centro", "Cohab", "Conjunto Esperança",
@@ -56,13 +69,6 @@ DROPDOWN_FIELDS = ["congregacao", "nacionalidade", "estado_civil"]
 # Google Sheets connection
 # =========================
 def get_gspread_client():
-    """
-    Autentica com service account.
-    Ordem:
-    1) st.secrets["gcp_service_account"]
-    2) arquivo local service_account.json
-    3) GOOGLE_APPLICATION_CREDENTIALS
-    """
     try:
         import gspread
         from google.oauth2.service_account import Credentials
@@ -233,7 +239,7 @@ def is_missing(v) -> bool:
 
 
 # =========================
-# Carregar dados do Sheets
+# Sheets read/write
 # =========================
 @st.cache_data(show_spinner=False, ttl=30)
 def load_sheet_df(spreadsheet_id: str, gid: int) -> pd.DataFrame:
@@ -259,7 +265,6 @@ def load_sheet_df(spreadsheet_id: str, gid: int) -> pd.DataFrame:
 
     df["_data_nasc_date"] = df["data_nasc"].apply(parse_date_any)
     df["_sheet_row"] = df.index + 2
-
     return df
 
 
@@ -346,6 +351,19 @@ def next_membro_id(df: pd.DataFrame) -> int:
     return 1
 
 
+def validate_required(payload: dict) -> list[str]:
+    missing = []
+    for k, label in REQUIRED_FIELDS.items():
+        v = payload.get(k, "")
+        if k == "data_nasc":
+            if not v:
+                missing.append(label)
+        else:
+            if clean_cell(v) == "":
+                missing.append(label)
+    return missing
+
+
 # =========================
 # UI
 # =========================
@@ -360,6 +378,8 @@ st.markdown(
   --muted:#475569;
   --border:#DBEAFE;
   --shadow: 0 10px 20px rgba(2, 6, 23, .08);
+  --danger:#DC2626;
+  --dangerSoft:#FEE2E2;
 }
 .main, .stApp{
   background: linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 55%, #E0F2FE 100%);
@@ -368,12 +388,29 @@ st.markdown(
   background: linear-gradient(135deg, var(--blue), var(--blue2));
   color: white;
   border-radius: 18px;
-  padding: 18px;
+  padding: 16px 18px;
   box-shadow: var(--shadow);
   margin-bottom: 18px;
+  display:flex;
+  align-items:center;
+  gap:12px;
 }
-.topbar h1{ margin:0; font-size: 1.35rem; font-weight: 900; }
-.topbar p{ margin:.35rem 0 0 0; opacity: .95; font-weight: 600; }
+.topbar-title{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.topbar-title h1{
+  margin:0;
+  font-size: 1.25rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+.topbar-title p{
+  margin:0;
+  opacity:.95;
+  font-weight: 650;
+}
 .card{
   background: white;
   border: 2px solid var(--border);
@@ -383,11 +420,17 @@ st.markdown(
   margin: 14px 0;
 }
 .section{ font-weight: 900; color: var(--blue2); font-size: 1.15rem; margin-bottom: 10px; }
-.small{ color: var(--muted); font-weight: 600; }
+.small{ color: var(--muted); font-weight: 650; }
 div.stButton>button{
   background: linear-gradient(135deg, var(--blue), var(--blue2));
-  color:#fff; border:none; border-radius: 14px; padding: 12px 18px;
-  font-weight: 900; font-size: 1.05rem; width:100%; box-shadow: var(--shadow);
+  color:#fff;
+  border:none;
+  border-radius: 14px;
+  padding: 12px 18px;
+  font-weight: 900;
+  font-size: 1.05rem;
+  width:100%;
+  box-shadow: var(--shadow);
 }
 .stTextInput input, .stSelectbox select, .stDateInput input{
   border-radius: 12px !important;
@@ -395,16 +438,11 @@ div.stButton>button{
   padding: 12px !important;
   font-size: 1rem !important;
 }
-hr{ border: none; height: 3px; background: linear-gradient(90deg, transparent, #BFDBFE, transparent); margin: 18px 0; }
-
-.missing-note{
-  background: #FEF3C7;
-  border: 2px solid #F59E0B;
-  color: #92400E;
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-weight: 800;
-  margin: 10px 0 6px 0;
+hr{
+  border: none;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #BFDBFE, transparent);
+  margin: 18px 0;
 }
 .success-box{
   background: linear-gradient(135deg, #ECFDF5, #BBF7D0);
@@ -414,20 +452,39 @@ hr{ border: none; height: 3px; background: linear-gradient(90deg, transparent, #
   text-align: center;
   box-shadow: var(--shadow);
 }
+.miss-wrap{
+  border: 2px solid var(--danger);
+  background: linear-gradient(135deg, var(--dangerSoft), #FFFFFF);
+  border-radius: 16px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.miss-label{
+  color: var(--danger);
+  font-weight: 900;
+  margin: 0 0 8px 0;
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# Logo menor
+# Topbar com logo dentro do retângulo
+logo_html = ""
 if os.path.exists(LOGO_PATH):
-    st.image(LOGO_PATH, width=220)
+    import base64
+    with open(LOGO_PATH, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    logo_html = f"<img src='data:image/jpeg;base64,{b64}' style='width:64px;height:64px;object-fit:contain;border-radius:12px;background:rgba(255,255,255,.15);padding:6px;' />"
 
 st.markdown(
     f"""
 <div class="topbar">
-  <h1>{APP_TITLE}</h1>
-  <p>Digite data de nascimento e o primeiro nome da mãe para encontrar seu cadastro.</p>
+  {logo_html}
+  <div class="topbar-title">
+    <h1>{APP_TITLE}</h1>
+    <p>Digite data de nascimento e o primeiro nome da mãe para encontrar seu cadastro.</p>
+  </div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -450,6 +507,7 @@ if "search_dn" not in st.session_state:
 if "search_mae" not in st.session_state:
     st.session_state.search_mae = ""
 
+
 st.markdown('<div class="card"><div class="section">🔐 Identificação do membro</div></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
@@ -470,7 +528,7 @@ with col2:
 
 if st.button("Buscar cadastro"):
     if inp_dn is None:
-        st.warning("Escolhe a data de nascimento.")
+        st.warning("Escolha a data de nascimento.")
     elif not inp_mae.strip():
         st.warning("Digite o nome da mãe.")
     else:
@@ -495,6 +553,7 @@ ws = open_worksheet_by_gid(client, SPREADSHEET_ID, WORKSHEET_GID)
 ensure_header_columns(ws, df)
 header = ws.row_values(1)
 
+
 def dropdown_text(label, field_name, current_value="", key_prefix="x"):
     opts = dropdown_opts[field_name]
     cur = str(current_value or "").strip()
@@ -504,8 +563,19 @@ def dropdown_text(label, field_name, current_value="", key_prefix="x"):
         return st.text_input(label, value=cur, key=f"{key_prefix}_{field_name}_txt").strip()
     return choice
 
-def missing_banner(label: str):
-    st.markdown(f"<div class='missing-note'>Sem informação em {label}. Atualize esse campo.</div>", unsafe_allow_html=True)
+
+def field_block(label: str, missing: bool, render_fn):
+    if missing:
+        st.markdown(
+            f"""
+<div class="miss-wrap">
+  <div class="miss-label">{label} obrigatório</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    render_fn()
+
 
 # =========================
 # Novo cadastro
@@ -515,52 +585,101 @@ if len(match_ids) == 0:
         """
 <div class="card">
   <div class="section">🆕 Novo cadastro</div>
-  <div class="small">Não achei ninguém com esses dados. Preencha o cadastro abaixo.</div>
+  <div class="small">Não encontramos registro. Preencha os dados abaixo.</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
     with st.form("novo_cadastro"):
-        nome_completo = st.text_input("Nome completo", value="")
-        cpf_raw = st.text_input("CPF", value="", placeholder="000.000.000-00")
-        whatsapp_raw = st.text_input("WhatsApp/Telefone", value="", placeholder="(88) 9.9999-9999")
+        dn_val = st.session_state.search_dn
+        mae_val = st.session_state.search_mae
 
-        bairro = st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=0)
+        field_block(
+            "Data de nascimento",
+            missing=(dn_val is None),
+            lambda: st.date_input("Data de nascimento", value=dn_val, min_value=date(1900, 1, 1), max_value=date.today(), format="DD/MM/YYYY", key="new_dn"),
+        )
+        field_block(
+            "Nome da mãe",
+            missing=(clean_cell(mae_val) == ""),
+            lambda: st.text_input("Nome da mãe", value=mae_val, key="new_mae"),
+        )
 
-        endereco = st.text_input("Endereço", value="")
-        nome_pai = st.text_input("Nome do pai", value="")
-        naturalidade = st.text_input("Naturalidade", value="")
+        field_block(
+            "Nome completo",
+            missing=True,
+            lambda: None
+        )
+        nome_completo = st.text_input("Nome completo", value="", key="new_nome")
 
-        nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", key_prefix="new")
-        estado_civil = dropdown_text("Estado civil", "estado_civil", key_prefix="new")
+        field_block(
+            "CPF",
+            missing=True,
+            lambda: None
+        )
+        cpf_raw = st.text_input("CPF", value="", placeholder="000.000.000-00", key="new_cpf")
 
-        data_batismo = st.text_input("Data do batismo", value="", placeholder="Ex.: 05/12/1992")
-        congregacao = dropdown_text("Congregação", "congregacao", key_prefix="new")
+        field_block(
+            "WhatsApp/Telefone",
+            missing=True,
+            lambda: None
+        )
+        whatsapp_raw = st.text_input("WhatsApp/Telefone", value="", placeholder="(88) 9.9999-9999", key="new_whats")
+
+        field_block(
+            "Bairro/Distrito",
+            missing=True,
+            lambda: None
+        )
+        bairro = st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=0, key="new_bairro")
+
+        field_block(
+            "Endereço",
+            missing=True,
+            lambda: None
+        )
+        endereco = st.text_input("Endereço", value="", key="new_endereco")
+
+        nome_pai = st.text_input("Nome do pai", value="", key="new_pai")
+        naturalidade = st.text_input("Naturalidade", value="", key="new_naturalidade")
+
+        nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", "", key_prefix="new")
+
+        field_block(
+            "Estado civil",
+            missing=True,
+            lambda: None
+        )
+        estado_civil = dropdown_text("Estado civil", "estado_civil", "", key_prefix="new")
+
+        data_batismo = st.text_input("Data do batismo", value="", placeholder="Ex.: 05/12/1992", key="new_batismo")
+
+        field_block(
+            "Congregação",
+            missing=True,
+            lambda: None
+        )
+        congregacao = dropdown_text("Congregação", "congregacao", "", key_prefix="new")
 
         st.markdown("---")
         salvar = st.form_submit_button("Salvar novo cadastro")
 
         if salvar:
+            dn_form = st.session_state.get("new_dn")
+            mae_form = st.session_state.get("new_mae", "").strip()
+
             cpf_digits = only_digits(cpf_raw)
             phone_digits = only_digits(whatsapp_raw)
-
-            if not cpf_valido(cpf_digits):
-                st.error("CPF inválido. Confira e tente de novo.")
-                st.stop()
-
-            if not phone_valido(phone_digits):
-                st.error("WhatsApp inválido. Precisa ter 11 números.")
-                st.stop()
 
             now_str = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
             novo_id = next_membro_id(df)
 
             payload = {
                 "membro_id": str(novo_id),
-                "cod_membro": "",  # deixa vazio como você pediu
-                "data_nasc": fmt_date_br(st.session_state.search_dn),
-                "nome_mae": st.session_state.search_mae,
+                "cod_membro": "",
+                "data_nasc": fmt_date_br(dn_form) if dn_form else "",
+                "nome_mae": mae_form,
                 "nome_completo": nome_completo.strip(),
                 "cpf": format_cpf(cpf_digits),
                 "whatsapp_telefone": format_phone_br(phone_digits),
@@ -575,18 +694,27 @@ if len(match_ids) == 0:
                 "atualizado": now_str,
             }
 
+            missing = validate_required(payload)
+            if missing:
+                st.error("Preencha os campos obrigatórios: " + ", ".join(missing) + ".")
+                st.stop()
+
+            if not cpf_valido(cpf_digits):
+                st.error("CPF inválido. Confira e tente de novo.")
+                st.stop()
+
+            if not phone_valido(phone_digits):
+                st.error("WhatsApp inválido. Precisa ter 11 números.")
+                st.stop()
+
             append_row_in_sheet(ws, header, payload)
 
-            st.markdown(
-                """
-<div class="success-box">
-  <div style="font-size:2rem; font-weight:900;">✅ Cadastro criado!</div>
-  <div style="margin-top:6px; font-weight:700;">Registro salvo na planilha da igreja.</div>
-</div>
-""",
-                unsafe_allow_html=True,
-            )
             st.cache_data.clear()
+            st.session_state.searched = False
+            st.session_state.match_ids = []
+            st.session_state.search_dn = None
+            st.session_state.search_mae = ""
+            st.rerun()
 
     st.stop()
 
@@ -620,94 +748,98 @@ else:
 row = df.loc[sel_idx].copy()
 sheet_row = int(row["_sheet_row"])
 
-st.markdown(
-    f"""
-<div class="card">
-  <div class="section">📄 Confirmação</div>
-  <div class="small">
-    Data de nascimento {clean_cell(row.get("data_nasc",""))}
-    <br>
-    Mãe {clean_cell(row.get("nome_mae",""))}
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
 bairro_current = clean_cell(row.get("bairro_distrito", ""))
 bairro_index = BAIRROS_DISTRITOS.index(bairro_current) if bairro_current in BAIRROS_DISTRITOS else 0
 
+row_dn = parse_date_any(row.get("data_nasc", ""))
+
 with st.form("editar_cadastro"):
-    if is_missing(row.get("nome_completo", "")):
-        missing_banner("Nome completo")
-    nome_completo = st.text_input("Nome completo", value=clean_cell(row.get("nome_completo", "")))
+    field_block(
+        "Data de nascimento",
+        missing=(row_dn is None),
+        lambda: st.date_input("Data de nascimento", value=row_dn, min_value=date(1900, 1, 1), max_value=date.today(), format="DD/MM/YYYY", key="edit_dn"),
+    )
+    field_block(
+        "Nome da mãe",
+        missing=is_missing(row.get("nome_mae", "")),
+        lambda: st.text_input("Nome da mãe", value=clean_cell(row.get("nome_mae", "")), key="edit_mae"),
+    )
 
-    if is_missing(row.get("cpf", "")):
-        missing_banner("CPF")
-    cpf_current = format_cpf(row.get("cpf", ""))
-    cpf_raw = st.text_input("CPF", value=cpf_current, placeholder="000.000.000-00")
+    field_block(
+        "Nome completo",
+        missing=is_missing(row.get("nome_completo", "")),
+        lambda: st.text_input("Nome completo", value=clean_cell(row.get("nome_completo", "")), key="edit_nome"),
+    )
 
-    if is_missing(row.get("whatsapp_telefone", "")):
-        missing_banner("WhatsApp/Telefone")
-    phone_current = format_phone_br(row.get("whatsapp_telefone", ""))
-    whatsapp_raw = st.text_input("WhatsApp/Telefone", value=phone_current, placeholder="(88) 9.9999-9999")
+    field_block(
+        "CPF",
+        missing=is_missing(row.get("cpf", "")),
+        lambda: st.text_input("CPF", value=format_cpf(row.get("cpf", "")), placeholder="000.000.000-00", key="edit_cpf"),
+    )
 
-    if is_missing(row.get("bairro_distrito", "")):
-        missing_banner("Bairro/Distrito")
-    bairro = st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=bairro_index)
+    field_block(
+        "WhatsApp/Telefone",
+        missing=is_missing(row.get("whatsapp_telefone", "")),
+        lambda: st.text_input("WhatsApp/Telefone", value=format_phone_br(row.get("whatsapp_telefone", "")), placeholder="(88) 9.9999-9999", key="edit_whats"),
+    )
 
-    if is_missing(row.get("endereco", "")):
-        missing_banner("Endereço")
-    endereco = st.text_input("Endereço", value=clean_cell(row.get("endereco", "")))
+    field_block(
+        "Bairro/Distrito",
+        missing=is_missing(row.get("bairro_distrito", "")),
+        lambda: st.selectbox("Bairro/Distrito", options=BAIRROS_DISTRITOS, index=bairro_index, key="edit_bairro"),
+    )
 
-    if is_missing(row.get("nome_pai", "")):
-        missing_banner("Nome do pai")
-    nome_pai = st.text_input("Nome do pai", value=clean_cell(row.get("nome_pai", "")))
+    field_block(
+        "Endereço",
+        missing=is_missing(row.get("endereco", "")),
+        lambda: st.text_input("Endereço", value=clean_cell(row.get("endereco", "")), key="edit_endereco"),
+    )
 
-    if is_missing(row.get("naturalidade", "")):
-        missing_banner("Naturalidade")
-    naturalidade = st.text_input("Naturalidade", value=clean_cell(row.get("naturalidade", "")))
-
-    if is_missing(row.get("nacionalidade", "")):
-        missing_banner("Nacionalidade")
+    nome_pai = st.text_input("Nome do pai", value=clean_cell(row.get("nome_pai", "")), key="edit_pai")
+    naturalidade = st.text_input("Naturalidade", value=clean_cell(row.get("naturalidade", "")), key="edit_naturalidade")
     nacionalidade = dropdown_text("Nacionalidade", "nacionalidade", row.get("nacionalidade", ""), key_prefix="edit")
 
-    if is_missing(row.get("estado_civil", "")):
-        missing_banner("Estado civil")
+    field_block(
+        "Estado civil",
+        missing=is_missing(row.get("estado_civil", "")),
+        lambda: None
+    )
     estado_civil = dropdown_text("Estado civil", "estado_civil", row.get("estado_civil", ""), key_prefix="edit")
 
-    if is_missing(row.get("data_batismo", "")):
-        missing_banner("Data do batismo")
-    data_batismo = st.text_input("Data do batismo", value=clean_cell(row.get("data_batismo", "")))
+    data_batismo = st.text_input("Data do batismo", value=clean_cell(row.get("data_batismo", "")), key="edit_batismo")
 
-    if is_missing(row.get("congregacao", "")):
-        missing_banner("Congregação")
+    field_block(
+        "Congregação",
+        missing=is_missing(row.get("congregacao", "")),
+        lambda: None
+    )
     congregacao = dropdown_text("Congregação", "congregacao", row.get("congregacao", ""), key_prefix="edit")
 
     st.markdown("---")
     salvar = st.form_submit_button("Salvar atualização")
 
     if salvar:
-        cpf_digits = only_digits(cpf_raw)
-        phone_digits = only_digits(whatsapp_raw)
+        dn_form = st.session_state.get("edit_dn")
+        mae_form = st.session_state.get("edit_mae", "").strip()
+        nome_form = st.session_state.get("edit_nome", "").strip()
+        cpf_form = st.session_state.get("edit_cpf", "")
+        whats_form = st.session_state.get("edit_whats", "")
+        bairro_form = st.session_state.get("edit_bairro", "")
+        endereco_form = st.session_state.get("edit_endereco", "").strip()
 
-        if not cpf_valido(cpf_digits):
-            st.error("CPF inválido. Confira e tente de novo.")
-            st.stop()
+        cpf_digits = only_digits(cpf_form)
+        phone_digits = only_digits(whats_form)
 
-        if not phone_valido(phone_digits):
-            st.error("WhatsApp inválido. Precisa ter 11 números.")
-            st.stop()
-
-        # 1) atualizado com data e hora
         now_str = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
 
         payload = {
-            "nome_completo": nome_completo.strip(),
+            "data_nasc": fmt_date_br(dn_form) if dn_form else "",
+            "nome_mae": mae_form,
+            "nome_completo": nome_form,
             "cpf": format_cpf(cpf_digits),
             "whatsapp_telefone": format_phone_br(phone_digits),
-            "bairro_distrito": bairro,
-            "endereco": endereco.strip(),
+            "bairro_distrito": bairro_form,
+            "endereco": endereco_form,
             "nome_pai": nome_pai.strip(),
             "nacionalidade": nacionalidade,
             "naturalidade": naturalidade.strip(),
@@ -717,15 +849,24 @@ with st.form("editar_cadastro"):
             "atualizado": now_str,
         }
 
+        missing = validate_required(payload)
+        if missing:
+            st.error("Preencha os campos obrigatórios: " + ", ".join(missing) + ".")
+            st.stop()
+
+        if not cpf_valido(cpf_digits):
+            st.error("CPF inválido. Confira e tente de novo.")
+            st.stop()
+
+        if not phone_valido(phone_digits):
+            st.error("WhatsApp inválido. Precisa ter 11 números.")
+            st.stop()
+
         update_row_in_sheet(ws, sheet_row, header, payload)
 
-        st.markdown(
-            """
-<div class="success-box">
-  <div style="font-size:2rem; font-weight:900;">✅ Atualização salva!</div>
-  <div style="margin-top:6px; font-weight:700;">Dados atualizados na planilha da igreja.</div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
         st.cache_data.clear()
+        st.session_state.searched = False
+        st.session_state.match_ids = []
+        st.session_state.search_dn = None
+        st.session_state.search_mae = ""
+        st.rerun()
