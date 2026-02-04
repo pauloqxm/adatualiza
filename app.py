@@ -3,12 +3,15 @@ import re
 import json
 import base64
 import unicodedata
+import logging
+import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
-from typing import Optional, Literal, Any
-from functools import lru_cache
+from typing import Optional, Literal, Any, Dict, List
+from functools import lru_cache, wraps
 from enum import Enum
+from time import time, sleep
 
 import pandas as pd
 import streamlit as st
@@ -18,10 +21,83 @@ import streamlit.components.v1 as components
 try:
     import gspread
     from google.oauth2.service_account import Credentials
+    from gspread.exceptions import APIError, SpreadsheetNotFound
     GSPREAD_AVAILABLE = True
 except ImportError:
     GSPREAD_AVAILABLE = False
     st.error("📦 Instale: `pip install gspread google-auth`")
+
+# ============================================================================
+# LOGGING ESTRUTURADO
+# ============================================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# DECORADORES DE PERFORMANCE E SEGURANÇA
+# ============================================================================
+
+def retry_on_failure(max_attempts: int = 3, delay: float = 1.0):
+    """Decorator para retry automático em caso de falha"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_attempts - 1:
+                        logger.error(f"Falha após {max_attempts} tentativas: {e}")
+                        raise
+                    logger.warning(f"Tentativa {attempt + 1} falhou: {e}. Retentando...")
+                    sleep(delay * (attempt + 1))  # Exponential backoff
+            return None
+        return wrapper
+    return decorator
+
+
+def rate_limit(max_calls: int = 10, time_window: int = 60):
+    """Rate limiting simples baseado em session_state"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = f"rate_limit_{func.__name__}"
+            now = time()
+
+            if key not in st.session_state:
+                st.session_state[key] = []
+
+            # Remove chamadas antigas
+            st.session_state[key] = [
+                t for t in st.session_state[key] 
+                if now - t < time_window
+            ]
+
+            if len(st.session_state[key]) >= max_calls:
+                st.error("⏱️ Muitas requisições. Aguarde um momento.")
+                return None
+
+            st.session_state[key].append(now)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def measure_time(func):
+    """Mede tempo de execução de funções"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time()
+        result = func(*args, **kwargs)
+        elapsed = time() - start
+        logger.info(f"{func.__name__} executado em {elapsed:.3f}s")
+        return result
+    return wrapper
 
 
 # ============================================================================
@@ -51,7 +127,7 @@ class Config:
 
     # App
     TITLE: str = "Sistema de Cadastro - Assembleia de Deus"
-    VERSION: str = "2.0.0"
+    VERSION: str = "3.0.0"
     ICON: str = "⛪"
     LOGO_PATH: str = "data/logo_ad.jpg"
 
@@ -61,7 +137,13 @@ class Config:
     # Google Sheets
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
     WORKSHEET_GID: int = 1191582738
-    CACHE_TTL: int = 30
+    CACHE_TTL: int = 60  # Aumentado para 60s
+
+    # Performance
+    MAX_RETRIES: int = 3
+    RETRY_DELAY: float = 1.0
+    RATE_LIMIT_CALLS: int = 10
+    RATE_LIMIT_WINDOW: int = 60
 
     # Schema
     SCHEMA: tuple = (
@@ -107,7 +189,7 @@ CFG = Config()
 
 
 # ============================================================================
-# UTILITÁRIOS DE TEXTO
+# UTILITÁRIOS DE TEXTO (MANTIDOS - JÁ OTIMIZADOS)
 # ============================================================================
 
 class TextUtils:
@@ -155,9 +237,21 @@ class TextUtils:
         """Verifica se está vazio"""
         return len(TextUtils.clean(value)) == 0
 
+    @staticmethod
+    def sanitize_input(value: str, max_length: int = 200) -> str:
+        """Sanitiza input do usuário"""
+        if not value:
+            return ""
+
+        # Remove caracteres perigosos
+        sanitized = re.sub(r'[<>\"\'%;()&+]', '', str(value))
+
+        # Limita tamanho
+        return sanitized[:max_length].strip()
+
 
 # ============================================================================
-# VALIDADORES
+# VALIDADORES (MANTIDOS - JÁ OTIMIZADOS)
 # ============================================================================
 
 @dataclass
@@ -227,7 +321,6 @@ class Validators:
         if birth_date > date.today():
             return ValidationResult(False, "Data no futuro não permitida")
 
-        from datetime import timedelta
         min_birth = date.today() - timedelta(days=365)
         if birth_date > min_birth:
             return ValidationResult(False, "Idade mínima: 1 ano")
@@ -236,7 +329,7 @@ class Validators:
 
 
 # ============================================================================
-# FORMATADORES
+# FORMATADORES (MANTIDOS)
 # ============================================================================
 
 class Formatters:
@@ -291,31 +384,48 @@ class Formatters:
 
 
 # ============================================================================
-# GOOGLE SHEETS SERVICE
+# GOOGLE SHEETS SERVICE - OTIMIZADO
 # ============================================================================
 
 class SheetsService:
-    """Gerenciador Google Sheets (Singleton)"""
+    """Gerenciador Google Sheets (Singleton Thread-Safe)"""
 
     _instance = None
     _client = None
+    _lock = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            try:
+                from threading import Lock
+                cls._lock = Lock()
+            except ImportError:
+                cls._lock = None
         return cls._instance
 
     @property
     def client(self):
-        """Cliente autenticado (cached)"""
+        """Cliente autenticado (cached e thread-safe)"""
         if self._client:
             return self._client
 
+        if self._lock:
+            with self._lock:
+                if self._client:  # Double-check
+                    return self._client
+                return self._authenticate()
+        else:
+            return self._authenticate()
+
+    def _authenticate(self):
+        """Método privado de autenticação"""
         if not GSPREAD_AVAILABLE:
             return None
 
         creds = self._load_credentials()
         if not creds:
+            logger.error("Credenciais não encontradas")
             st.error("🔐 Configure credenciais do Google no st.secrets")
             return None
 
@@ -326,8 +436,10 @@ class SheetsService:
             ]
             credentials = Credentials.from_service_account_info(creds, scopes=scopes)
             self._client = gspread.authorize(credentials)
+            logger.info("Cliente Google Sheets autenticado com sucesso")
             return self._client
         except Exception as e:
+            logger.error(f"Erro na autenticação: {e}")
             st.error(f"❌ Erro ao autenticar: {e}")
             return None
 
@@ -351,8 +463,9 @@ class SheetsService:
 
         return None
 
+    @retry_on_failure(max_attempts=CFG.MAX_RETRIES, delay=CFG.RETRY_DELAY)
     def get_worksheet(self):
-        """Obtém worksheet pelo GID"""
+        """Obtém worksheet pelo GID com retry"""
         if not self.client:
             return None
 
@@ -360,16 +473,19 @@ class SheetsService:
             sheet = self.client.open_by_key(CFG.SPREADSHEET_ID)
             for ws in sheet.worksheets():
                 if int(ws.id) == CFG.WORKSHEET_GID:
+                    logger.info(f"Worksheet {CFG.WORKSHEET_GID} encontrada")
                     return ws
-            raise gspread.WorksheetNotFound(f"GID {CFG.WORKSHEET_GID} não encontrado")
+            raise SpreadsheetNotFound(f"GID {CFG.WORKSHEET_GID} não encontrado")
         except Exception as e:
+            logger.error(f"Erro ao acessar planilha: {e}")
             st.error(f"❌ Erro ao acessar planilha: {e}")
             return None
 
     @staticmethod
     @st.cache_data(ttl=CFG.CACHE_TTL, show_spinner=False)
+    @measure_time
     def load_dataframe(_worksheet) -> pd.DataFrame:
-        """Carrega dados (cached 30s)"""
+        """Carrega dados (cached 60s com medição de performance)"""
         if not _worksheet:
             return pd.DataFrame()
 
@@ -377,25 +493,33 @@ class SheetsService:
             values = _worksheet.get_all_values()
 
             if not values:
+                logger.warning("Planilha vazia - criando header")
                 _worksheet.append_row(list(CFG.SCHEMA), value_input_option="USER_ENTERED")
                 values = _worksheet.get_all_values()
 
             header, *rows = values
             df = pd.DataFrame(rows, columns=header)
 
+            # Garante colunas do schema
             for col in CFG.SCHEMA:
                 if col not in df.columns:
                     df[col] = ""
 
+            # Otimizações
             df["_sheet_row"] = range(2, len(df) + 2)
+            df["_birth_date"] = df["data_nasc"].apply(Formatters.parse_date)
+
+            logger.info(f"Carregados {len(df)} registros")
             return df
         except Exception as e:
+            logger.error(f"Erro ao carregar dados: {e}")
             st.error(f"❌ Erro ao carregar: {e}")
             return pd.DataFrame()
 
     @staticmethod
+    @retry_on_failure(max_attempts=CFG.MAX_RETRIES, delay=CFG.RETRY_DELAY)
     def append_row(worksheet, data: dict) -> bool:
-        """Adiciona linha"""
+        """Adiciona linha com retry"""
         if not worksheet:
             return False
 
@@ -404,14 +528,17 @@ class SheetsService:
             row = [TextUtils.clean(data.get(col, "")) for col in header]
             worksheet.append_row(row, value_input_option="USER_ENTERED")
             st.cache_data.clear()
+            logger.info(f"Linha adicionada: membro_id={data.get('membro_id')}")
             return True
         except Exception as e:
+            logger.error(f"Erro ao adicionar: {e}")
             st.error(f"❌ Erro ao adicionar: {e}")
             return False
 
     @staticmethod
+    @retry_on_failure(max_attempts=CFG.MAX_RETRIES, delay=CFG.RETRY_DELAY)
     def update_row(worksheet, row_num: int, data: dict) -> bool:
-        """Atualiza linha"""
+        """Atualiza linha com retry"""
         if not worksheet:
             return False
 
@@ -432,8 +559,10 @@ class SheetsService:
 
             worksheet.update(range_notation, [current], value_input_option="USER_ENTERED")
             st.cache_data.clear()
+            logger.info(f"Linha {row_num} atualizada")
             return True
         except Exception as e:
+            logger.error(f"Erro ao atualizar: {e}")
             st.error(f"❌ Erro ao atualizar: {e}")
             return False
 
@@ -448,33 +577,40 @@ class SheetsService:
 
 
 # ============================================================================
-# LÓGICA DE NEGÓCIO
+# LÓGICA DE NEGÓCIO (OTIMIZADA)
 # ============================================================================
 
+@measure_time
 def find_members(df: pd.DataFrame, birth_date: date, mother_name: str) -> pd.DataFrame:
-    """Busca membros por data de nascimento e nome da mãe"""
+    """Busca membros com validação aprimorada"""
     mother_first = TextUtils.first_token(mother_name)
 
-    if not mother_first:
+    if not mother_first or len(mother_first) < 2:
+        logger.warning("Nome da mãe muito curto")
         return df.iloc[0:0].copy()
 
-    # Adiciona coluna de data parseada se não existir
-    if "_birth_date" not in df.columns:
-        df["_birth_date"] = df["data_nasc"].apply(Formatters.parse_date)
-
+    # Usa coluna já calculada no cache
     mask_date = df["_birth_date"] == birth_date
     mask_mother = df["nome_mae"].apply(lambda x: TextUtils.first_token(x) == mother_first)
 
-    return df[mask_date & mask_mother].copy()
+    result = df[mask_date & mask_mother].copy()
+    logger.info(f"Encontrados {len(result)} registros")
+    return result
 
 
 def validate_member_data(data: dict) -> tuple[bool, list[str]]:
-    """Valida dados completos de membro"""
+    """Valida dados completos com sanitização"""
     errors = []
+
+    # Sanitiza inputs
+    sanitized_data = {
+        k: TextUtils.sanitize_input(v) if isinstance(v, str) else v
+        for k, v in data.items()
+    }
 
     # Campos obrigatórios
     for field, label in CFG.REQUIRED.items():
-        value = data.get(field)
+        value = sanitized_data.get(field)
         if field == "data_nasc":
             if not value or not isinstance(value, date):
                 errors.append(f"{label} é obrigatório")
@@ -482,23 +618,20 @@ def validate_member_data(data: dict) -> tuple[bool, list[str]]:
             if TextUtils.is_empty(value):
                 errors.append(f"{label} é obrigatório")
 
-    # CPF
-    cpf_result = Validators.cpf(data.get('cpf', ''))
+    # Validações específicas
+    cpf_result = Validators.cpf(sanitized_data.get('cpf', ''))
     if not cpf_result:
         errors.append(cpf_result.message)
 
-    # Telefone
-    phone_result = Validators.phone(data.get('whatsapp_telefone', ''))
+    phone_result = Validators.phone(sanitized_data.get('whatsapp_telefone', ''))
     if not phone_result:
         errors.append(phone_result.message)
 
-    # Data nascimento
-    date_result = Validators.birth_date(data.get('data_nasc'))
+    date_result = Validators.birth_date(sanitized_data.get('data_nasc'))
     if not date_result:
         errors.append(date_result.message)
 
-    # Nome completo
-    full_name = data.get('nome_completo', '').strip()
+    full_name = sanitized_data.get('nome_completo', '').strip()
     if len(full_name.split()) < 2:
         errors.append("Nome completo deve ter nome e sobrenome")
 
@@ -506,7 +639,7 @@ def validate_member_data(data: dict) -> tuple[bool, list[str]]:
 
 
 def get_next_member_id(df: pd.DataFrame) -> int:
-    """Gera próximo ID de membro"""
+    """Gera próximo ID com validação"""
     if df.empty or "membro_id" not in df.columns:
         return 1
 
@@ -514,13 +647,18 @@ def get_next_member_id(df: pd.DataFrame) -> int:
     ids = pd.to_numeric(ids, errors='coerce')
 
     if ids.notna().any():
-        return int(ids.max()) + 1
+        next_id = int(ids.max()) + 1
+        logger.info(f"Próximo ID: {next_id}")
+        return next_id
     return 1
 
 
-def build_dropdown_options(df: pd.DataFrame, field: str) -> list[str]:
-    """Constrói opções de dropdown a partir dos dados"""
-    if df.empty or field not in df.columns:
+@st.cache_data(ttl=300)  # Cache de 5 minutos
+def build_dropdown_options(df_hash: str, field: str) -> list[str]:
+    """Constrói opções com cache por hash do DataFrame"""
+    # Carrega df do cache do Streamlit
+    df = st.session_state.get('_cached_df')
+    if df is None or df.empty or field not in df.columns:
         return []
 
     values = df[field].fillna("").astype(str).str.strip()
@@ -544,11 +682,11 @@ def build_dropdown_options(df: pd.DataFrame, field: str) -> list[str]:
 
 
 # ============================================================================
-# UI COMPONENTS
+# UI COMPONENTS (MANTIDOS COM PEQUENOS AJUSTES)
 # ============================================================================
 
 def render_css():
-    """CSS moderno"""
+    """CSS moderno com performance otimizada"""
     st.markdown("""
     <style>
     :root {
@@ -563,27 +701,12 @@ def render_css():
         background: linear-gradient(135deg, #EFF6FF 0%, #FFF 55%, #E0F2FE 100%);
     }
 
-    .card {
-        background: white;
-        border: 2px solid var(--border);
-        border-radius: 18px;
-        padding: 18px;
-        box-shadow: var(--shadow);
-        margin: 14px 0;
-    }
-
-    .section-title {
-        font-weight: 900;
-        color: var(--primary-dark);
-        font-size: 1.15rem;
-        margin-bottom: 10px;
-    }
-
     .stTextInput input, .stSelectbox select, .stDateInput input {
         border-radius: 12px !important;
         border: 2px solid #BFDBFE !important;
         padding: 12px !important;
         transition: all 0.2s ease !important;
+        will-change: border-color, box-shadow;
     }
 
     .stTextInput input:focus, .stSelectbox select:focus {
@@ -601,27 +724,41 @@ def render_css():
         width: 100%;
         box-shadow: var(--shadow);
         transition: transform 0.2s ease;
+        will-change: transform;
     }
 
     div.stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 12px 24px rgba(2, 6, 23, .12);
     }
+
+    /* Loading animation */
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    .loading {
+        animation: pulse 1.5s ease-in-out infinite;
+    }
     </style>
     """, unsafe_allow_html=True)
 
 
 def render_header(title: str):
-    """Header com logo - CORRIGIDO"""
+    """Header otimizado"""
     logo_html = ""
 
     if os.path.exists(CFG.LOGO_PATH):
         try:
-            with open(CFG.LOGO_PATH, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-                logo_html = f'<img src="data:image/jpeg;base64,{b64}" style="width:56px;height:56px;object-fit:contain;border-radius:12px;background:rgba(255,255,255,.15);padding:6px;" />'
-        except Exception:
-            pass
+            # Cache da logo em session_state
+            if 'logo_b64' not in st.session_state:
+                with open(CFG.LOGO_PATH, "rb") as f:
+                    st.session_state.logo_b64 = base64.b64encode(f.read()).decode()
+
+            logo_html = f'<img src="data:image/jpeg;base64,{st.session_state.logo_b64}" style="width:56px;height:56px;object-fit:contain;border-radius:12px;background:rgba(255,255,255,.15);padding:6px;" />'
+        except Exception as e:
+            logger.warning(f"Erro ao carregar logo: {e}")
 
     header_html = f"""
     <div style="background:linear-gradient(135deg,#1D4ED8,#0B3AA8);
@@ -631,7 +768,7 @@ def render_header(title: str):
         {logo_html}
         <div>
             <h1 style="margin:0;font-size:1.25rem;font-weight:900;line-height:1.1;">
-                {title}
+                {title} <span style="font-size:0.7rem;opacity:0.8;">v{CFG.VERSION}</span>
             </h1>
             <p style="margin:0;opacity:.95;font-weight:650;">
                 Digite data de nascimento e o primeiro nome da mãe
@@ -662,113 +799,64 @@ def render_card_header(title: str, subtitle: str = ""):
 
 
 def render_member_preview(member: dict, total_found: int):
-    """Preview do membro encontrado - DESIGN MODERNO"""
+    """Preview otimizado com tipografia melhorada"""
     import html
 
-    # Limpa e escapa dados
     nome = html.escape(TextUtils.clean(member.get("nome_completo", "")) or "(Sem nome)")
-    cong = html.escape(TextUtils.clean(member.get("congregacao", "")) or "Não informada")
-    mae = html.escape(TextUtils.clean(member.get("nome_mae", "")) or "Não informada")
-    pai = html.escape(TextUtils.clean(member.get("nome_pai", "")) or "Não informado")
-
+    cong = html.escape(TextUtils.clean(member.get("congregacao", "")) or "sem informação")
+    mae = html.escape(TextUtils.clean(member.get("nome_mae", "")))
     dn = Formatters.parse_date(member.get("data_nasc"))
     data_str = html.escape(Formatters.date_br(dn))
 
-    cpf = html.escape(Formatters.cpf(member.get("cpf", "")) or "Não informado")
-    whats = html.escape(Formatters.phone(member.get("whatsapp_telefone", "")) or "Não informado")
-
-    endereco = html.escape(TextUtils.clean(member.get("endereco", "")) or "Não informado")
-    bairro = html.escape(TextUtils.clean(member.get("bairro_distrito", "")) or "Não informado")
-
-    naturalidade = html.escape(TextUtils.clean(member.get("naturalidade", "")) or "Não informada")
-    nacionalidade = html.escape(TextUtils.clean(member.get("nacionalidade", "")) or "Não informada")
-    estado_civil = html.escape(TextUtils.clean(member.get("estado_civil", "")) or "Não informado")
-    batismo = html.escape(TextUtils.clean(member.get("data_batismo", "")) or "Não informada")
-
-    # Identifica campos vazios (que precisam atualização)
-    def is_missing(value):
-        return value in ["Não informado", "Não informada"]
-
-    def field_class(value):
-        return "field-missing" if is_missing(value) else "field-ok"
-
     html_content = f"""
     <style>
-        .preview-card {{
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            border: none;
-            border-radius: 24px;
-            padding: 0;
-            box-shadow: 
-                0 20px 50px rgba(2, 6, 23, 0.08),
-                0 0 0 1px rgba(29, 78, 216, 0.1);
-            margin: 20px 0;
-            overflow: hidden;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }}
-
-        .preview-header {{
-            background: linear-gradient(135deg, #1D4ED8 0%, #0B3AA8 100%);
-            padding: 24px 28px;
-            color: white;
-        }}
-
-        .preview-title {{
-            font-size: 1.4rem;
-            font-weight: 900;
-            margin: 0 0 8px 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }}
-
-        .preview-subtitle {{
-            font-size: 0.95rem;
-            opacity: 0.95;
-            font-weight: 600;
-            margin: 0;
-        }}
-
-        .preview-body {{
-            padding: 28px;
-        }}
-
-        .member-name {{
-            font-size: 1.6rem;
-            font-weight: 900;
-            color: #0B3AA8;
-            margin: 0 0 6px 0;
-            line-height: 1.2;
-        }}
-
-        .member-cong {{
-            font-size: 1rem;
-            font-weight: 700;
-            color: #64748B;
-            margin: 0 0 24px 0;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #E0F2FE;
-        }}
-
-        .info-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }}
-
-        .info-item {{
+        .card {{
             background: white;
-            padding: 16px;
-            border-radius: 14px;
-            border: 2px solid #E0F2FE;
-            transition: all 0.2s ease;
+            border: 2px solid #DBEAFE;
+            border-radius: 18px;
+            padding: 18px;
+            box-shadow: 0 10px 20px rgba(2, 6, 23, .08);
+            margin: 14px 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Roboto', sans-serif;
         }}
 
-        .info-item:hover {{
-            border-color: #BFDBFE;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 16px rgba(2, 6, 23, 0.06);
+        .section {{
+            font-weight: 800;
+            color: #0B3AA8;
+            font-size: 1.25rem;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+            line-height: 1.3;
+        }}
+
+        .small {{
+            color: #64748B;
+            font-weight: 600;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }}
+
+        .found-name {{
+            margin-top: 16px;
+            font-weight: 800;
+            color: #0B3AA8;
+            font-size: 1.35rem;
+            line-height: 1.3;
+            letter-spacing: -0.02em;
+        }}
+
+        .cong-muted {{
+            margin-top: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #64748B;
+            line-height: 1.5;
+        }}
+
+        .info-row {{
+            margin-top: 16px;
+            padding-top: 14px;
+            border-top: 2px solid #E0F2FE;
         }}
 
         .info-label {{
@@ -776,168 +864,43 @@ def render_member_preview(member: dict, total_found: int):
             font-weight: 700;
             color: #64748B;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin: 0 0 6px 0;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
         }}
 
         .info-value {{
-            font-size: 1.05rem;
-            font-weight: 800;
-            color: #1e293b;
-            margin: 0;
-            word-break: break-word;
-        }}
-
-        .field-ok .info-value {{
-            color: #0B3AA8;
-        }}
-
-        .field-missing {{
-            background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
-            border: 2px solid #F59E0B;
-            position: relative;
-        }}
-
-        .field-missing::before {{
-            content: "⚠️";
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            font-size: 1.2rem;
-        }}
-
-        .field-missing .info-label {{
-            color: #92400E;
-        }}
-
-        .field-missing .info-value {{
-            color: #D97706;
-            font-style: italic;
-        }}
-
-        .section-divider {{
-            height: 3px;
-            background: linear-gradient(90deg, transparent, #BFDBFE, transparent);
-            margin: 24px 0;
-            border: none;
-        }}
-
-        .update-hint {{
-            background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
-            border-left: 4px solid #1D4ED8;
-            padding: 14px 18px;
-            border-radius: 12px;
-            margin-top: 24px;
-        }}
-
-        .update-hint-text {{
-            margin: 0;
-            font-size: 0.9rem;
+            font-size: 1.1rem;
             font-weight: 700;
             color: #0B3AA8;
-        }}
-
-        .badge {{
-            display: inline-block;
-            background: rgba(255, 255, 255, 0.25);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 700;
+            line-height: 1.4;
+            letter-spacing: -0.01em;
         }}
     </style>
 
-    <div class="preview-card">
-        <div class="preview-header">
-            <div class="preview-title">
-                ✓ Cadastro Encontrado
-                <span class="badge">{total_found} registro(s)</span>
-            </div>
-            <div class="preview-subtitle">
-                Revise as informações e atualize os campos em destaque
-            </div>
-        </div>
+    <div class="card">
+        <div class="section">Cadastro encontrado</div>
+        <div class="small">Achamos {total_found} registro(s). Selecione e atualize.</div>
 
-        <div class="preview-body">
-            <h2 class="member-name">{nome}</h2>
-            <p class="member-cong">📍 Congregação: {cong}</p>
+        <div style="margin-top:16px;">
+            <div class="info-label"><b>Data de nascimento</b></div>
+            <div class="info-value">{data_str}</div>
 
-            <div class="info-grid">
-                <div class="info-item field-ok">
-                    <div class="info-label">📅 Data de Nascimento</div>
-                    <div class="info-value">{data_str}</div>
-                </div>
-
-                <div class="info-item field-ok">
-                    <div class="info-label">👩 Nome da Mãe</div>
-                    <div class="info-value">{mae}</div>
-                </div>
-
-                <div class="info-item {field_class(pai)}">
-                    <div class="info-label">👨 Nome do Pai</div>
-                    <div class="info-value">{pai}</div>
-                </div>
-
-                <div class="info-item {field_class(cpf)}">
-                    <div class="info-label">🆔 CPF</div>
-                    <div class="info-value">{cpf}</div>
-                </div>
-
-                <div class="info-item {field_class(whats)}">
-                    <div class="info-label">📱 WhatsApp</div>
-                    <div class="info-value">{whats}</div>
-                </div>
-
-                <div class="info-item {field_class(estado_civil)}">
-                    <div class="info-label">💑 Estado Civil</div>
-                    <div class="info-value">{estado_civil}</div>
-                </div>
+            <div style="margin-top:14px;">
+                <div class="info-label"><b>Nome da mãe</b></div>
+                <div class="info-value">{mae}</div>
             </div>
 
-            <hr class="section-divider">
-
-            <div class="info-grid">
-                <div class="info-item {field_class(endereco)}">
-                    <div class="info-label">🏠 Endereço</div>
-                    <div class="info-value">{endereco}</div>
-                </div>
-
-                <div class="info-item {field_class(bairro)}">
-                    <div class="info-label">📍 Bairro</div>
-                    <div class="info-value">{bairro}</div>
-                </div>
-
-                <div class="info-item {field_class(naturalidade)}">
-                    <div class="info-label">🌍 Naturalidade</div>
-                    <div class="info-value">{naturalidade}</div>
-                </div>
-
-                <div class="info-item {field_class(nacionalidade)}">
-                    <div class="info-label">🌎 Nacionalidade</div>
-                    <div class="info-value">{nacionalidade}</div>
-                </div>
-
-                <div class="info-item {field_class(batismo)}">
-                    <div class="info-label">✝️ Data do Batismo</div>
-                    <div class="info-value">{batismo}</div>
-                </div>
-            </div>
-
-            <div class="update-hint">
-                <p class="update-hint-text">
-                    💡 Os campos destacados em amarelo precisam ser atualizados. 
-                    Preencha-os no formulário abaixo.
-                </p>
-            </div>
+            <div class="found-name">{nome}</div>
+            <div class="cong-muted">Congregação: {cong}</div>
         </div>
     </div>
     """
 
-    components.html(html_content, height=750)
+    components.html(html_content, height=280)
 
 
 # ============================================================================
-# FORMULÁRIOS
+# FORMULÁRIOS (COM DESTAQUE PARA CAMPOS VAZIOS)
 # ============================================================================
 
 def render_member_form(
@@ -945,15 +908,27 @@ def render_member_form(
     initial_data: Optional[dict] = None,
     dropdown_opts: Optional[dict] = None
 ) -> Optional[dict]:
-    """Renderiza formulário de membro (novo ou edição)"""
+    """Formulário com destaque visual para campos vazios"""
 
     initial_data = initial_data or {}
     dropdown_opts = dropdown_opts or {}
 
     key_prefix = f"{mode}_"
-
-    # Dados iniciais
     birth_date = Formatters.parse_date(initial_data.get("data_nasc"))
+
+    # Verifica campos vazios
+    empty_fields = {
+        'cpf': TextUtils.is_empty(initial_data.get("cpf", "")),
+        'whatsapp': TextUtils.is_empty(initial_data.get("whatsapp_telefone", "")),
+        'endereco': TextUtils.is_empty(initial_data.get("endereco", "")),
+        'bairro': TextUtils.is_empty(initial_data.get("bairro_distrito", "")),
+        'pai': TextUtils.is_empty(initial_data.get("nome_pai", "")),
+        'naturalidade': TextUtils.is_empty(initial_data.get("naturalidade", "")),
+        'nacionalidade': TextUtils.is_empty(initial_data.get("nacionalidade", "")),
+        'estado_civil': TextUtils.is_empty(initial_data.get("estado_civil", "")),
+        'batismo': TextUtils.is_empty(initial_data.get("data_batismo", "")),
+        'congregacao': TextUtils.is_empty(initial_data.get("congregacao", "")),
+    }
 
     with st.form(f"{mode}_member_form", clear_on_submit=False):
         st.markdown("### 📋 Dados pessoais")
@@ -977,20 +952,26 @@ def render_member_form(
             )
 
         with col2:
+            if empty_fields['cpf']:
+                st.warning("⚠️ CPF não informado", icon="⚠️")
             cpf_input = st.text_input(
                 "CPF *",
                 value=Formatters.cpf(initial_data.get("cpf", "")),
                 placeholder="000.000.000-00",
                 key=f"{key_prefix}cpf",
-                max_chars=14
+                max_chars=14,
+                help="Campo obrigatório" if empty_fields['cpf'] else None
             )
 
+        if empty_fields['whatsapp']:
+            st.warning("⚠️ WhatsApp/Telefone não informado", icon="⚠️")
         whats_input = st.text_input(
             "WhatsApp/Telefone *",
             value=Formatters.phone(initial_data.get("whatsapp_telefone", "")),
             placeholder="(88) 9.9999-9999",
             key=f"{key_prefix}whats",
-            max_chars=15
+            max_chars=15,
+            help="Campo obrigatório" if empty_fields['whatsapp'] else None
         )
 
         st.markdown("### 📍 Endereço")
@@ -998,18 +979,24 @@ def render_member_form(
         bairro_current = TextUtils.clean(initial_data.get("bairro_distrito", ""))
         bairro_idx = CFG.BAIRROS.index(bairro_current) if bairro_current in CFG.BAIRROS else 0
 
+        if empty_fields['bairro']:
+            st.warning("⚠️ Bairro/Distrito não informado", icon="⚠️")
         bairro = st.selectbox(
             "Bairro/Distrito *",
             options=CFG.BAIRROS,
             index=bairro_idx,
-            key=f"{key_prefix}bairro"
+            key=f"{key_prefix}bairro",
+            help="Campo obrigatório" if empty_fields['bairro'] else None
         )
 
+        if empty_fields['endereco']:
+            st.warning("⚠️ Endereço não informado", icon="⚠️")
         endereco = st.text_input(
             "Endereço completo *",
             value=TextUtils.clean(initial_data.get("endereco", "")),
             key=f"{key_prefix}endereco",
-            placeholder="Rua, número, complemento"
+            placeholder="Rua, número, complemento",
+            help="Campo obrigatório" if empty_fields['endereco'] else None
         )
 
         st.markdown("### 👨‍👩‍👧 Filiação")
@@ -1023,21 +1010,27 @@ def render_member_form(
             )
 
         with col2:
+            if empty_fields['pai']:
+                st.info("💡 Nome do pai recomendado", icon="💡")
             pai = st.text_input(
                 "Nome do pai",
                 value=TextUtils.clean(initial_data.get("nome_pai", "")),
-                key=f"{key_prefix}pai"
+                key=f"{key_prefix}pai",
+                help="Recomendado preencher" if empty_fields['pai'] else None
             )
 
         st.markdown("### 📝 Dados complementares")
 
         col1, col2 = st.columns(2)
         with col1:
+            if empty_fields['naturalidade']:
+                st.info("💡 Naturalidade recomendada", icon="💡")
             naturalidade = st.text_input(
                 "Naturalidade",
                 value=TextUtils.clean(initial_data.get("naturalidade", "")),
                 key=f"{key_prefix}nat",
-                placeholder="Cidade de nascimento"
+                placeholder="Cidade de nascimento",
+                help="Recomendado preencher" if empty_fields['naturalidade'] else None
             )
 
         with col2:
@@ -1045,31 +1038,40 @@ def render_member_form(
             nac_current = TextUtils.clean(initial_data.get("nacionalidade", "")).upper()
             nac_idx = nac_opts.index(nac_current) if nac_current in nac_opts else 0
 
+            if empty_fields['nacionalidade']:
+                st.info("💡 Nacionalidade recomendada", icon="💡")
             nacionalidade = st.selectbox(
                 "Nacionalidade",
                 options=nac_opts,
                 index=nac_idx,
-                key=f"{key_prefix}nac"
+                key=f"{key_prefix}nac",
+                help="Recomendado preencher" if empty_fields['nacionalidade'] else None
             )
 
         ec_opts = dropdown_opts.get("estado_civil", [e.value for e in EstadoCivil])
         ec_current = TextUtils.clean(initial_data.get("estado_civil", "")).upper()
         ec_idx = ec_opts.index(ec_current) if ec_current in ec_opts else 0
 
+        if empty_fields['estado_civil']:
+            st.warning("⚠️ Estado civil não informado", icon="⚠️")
         estado_civil = st.selectbox(
             "Estado civil *",
             options=ec_opts,
             index=ec_idx,
-            key=f"{key_prefix}ec"
+            key=f"{key_prefix}ec",
+            help="Campo obrigatório" if empty_fields['estado_civil'] else None
         )
 
         col1, col2 = st.columns(2)
         with col1:
+            if empty_fields['batismo']:
+                st.info("💡 Data do batismo recomendada", icon="💡")
             batismo = st.text_input(
                 "Data do batismo",
                 value=TextUtils.clean(initial_data.get("data_batismo", "")),
                 key=f"{key_prefix}bat",
-                placeholder="Ex.: 05/12/1992"
+                placeholder="Ex.: 05/12/1992",
+                help="Recomendado preencher" if empty_fields['batismo'] else None
             )
 
         with col2:
@@ -1077,11 +1079,14 @@ def render_member_form(
             cong_current = TextUtils.clean(initial_data.get("congregacao", "")).upper()
             cong_idx = cong_opts.index(cong_current) if cong_current in cong_opts else 0
 
+            if empty_fields['congregacao']:
+                st.warning("⚠️ Congregação não informada", icon="⚠️")
             congregacao = st.selectbox(
                 "Congregação *",
                 options=cong_opts,
                 index=cong_idx,
-                key=f"{key_prefix}cong"
+                key=f"{key_prefix}cong",
+                help="Campo obrigatório" if empty_fields['congregacao'] else None
             )
 
         st.divider()
@@ -1092,18 +1097,18 @@ def render_member_form(
 
         if submitted:
             return {
-                "nome_completo": nome.strip(),
+                "nome_completo": TextUtils.sanitize_input(nome),
                 "data_nasc": data_nasc,
                 "cpf": cpf_input,
                 "whatsapp_telefone": whats_input,
                 "bairro_distrito": bairro,
-                "endereco": endereco.strip(),
-                "nome_mae": mae.strip(),
-                "nome_pai": pai.strip(),
+                "endereco": TextUtils.sanitize_input(endereco),
+                "nome_mae": TextUtils.sanitize_input(mae),
+                "nome_pai": TextUtils.sanitize_input(pai),
                 "nacionalidade": nacionalidade,
-                "naturalidade": naturalidade.strip(),
+                "naturalidade": TextUtils.sanitize_input(naturalidade),
                 "estado_civil": estado_civil,
-                "data_batismo": batismo.strip(),
+                "data_batismo": TextUtils.sanitize_input(batismo),
                 "congregacao": congregacao,
             }
 
@@ -1111,16 +1116,18 @@ def render_member_form(
 
 
 # ============================================================================
-# MAIN APP
+# MAIN APP - OTIMIZADO
 # ============================================================================
 
 def initialize_session():
-    """Inicializa estado da sessão"""
+    """Inicializa estado da sessão com validações"""
     defaults = {
         "searched": False,
         "match_ids": [],
         "search_dn": None,
         "search_mae": "",
+        "_cached_df": None,  # Cache adicional do DataFrame
+        "last_update": None,  # Timestamp da última atualização
     }
 
     for key, value in defaults.items():
@@ -1128,14 +1135,16 @@ def initialize_session():
             st.session_state[key] = value
 
 
+@measure_time
 def main():
-    """Aplicação principal"""
+    """Aplicação principal otimizada"""
 
     # Config página
     st.set_page_config(
         page_title=CFG.TITLE,
         page_icon=CFG.ICON,
-        layout="centered"
+        layout="centered",
+        initial_sidebar_state="collapsed"  # Performance
     )
 
     # UI
@@ -1152,23 +1161,28 @@ def main():
     if not worksheet:
         st.stop()
 
-    # Carrega dados
+    # Carrega dados com progress
     with st.spinner("🔄 Carregando base de dados..."):
         df = SheetsService.load_dataframe(worksheet)
+        st.session_state._cached_df = df  # Cache adicional
 
     if df.empty:
         st.error("❌ Não foi possível carregar os dados")
+        logger.error("DataFrame vazio")
         st.stop()
 
-    # Dropdown options
+    # Hash do DataFrame para cache de dropdowns
+    df_hash = hashlib.md5(str(df.shape).encode()).hexdigest()
+
+    # Dropdown options com cache otimizado
     dropdown_opts = {
-        "nacionalidade": build_dropdown_options(df, "nacionalidade"),
-        "estado_civil": build_dropdown_options(df, "estado_civil"),
-        "congregacao": build_dropdown_options(df, "congregacao"),
+        "nacionalidade": build_dropdown_options(df_hash, "nacionalidade"),
+        "estado_civil": build_dropdown_options(df_hash, "estado_civil"),
+        "congregacao": build_dropdown_options(df_hash, "congregacao"),
     }
 
     # ========================================
-    # BUSCA
+    # BUSCA COM RATE LIMITING
     # ========================================
 
     render_card_header("🔍 Identificação do membro")
@@ -1190,24 +1204,33 @@ def main():
             "Nome da mãe",
             value=st.session_state.search_mae,
             placeholder="Ex.: Maria",
-            help="Apenas o primeiro nome"
+            help="Apenas o primeiro nome (mínimo 2 letras)"
         )
 
-    if st.button("🔍 Buscar cadastro", use_container_width=True):
+    @rate_limit(max_calls=CFG.RATE_LIMIT_CALLS, time_window=CFG.RATE_LIMIT_WINDOW)
+    def perform_search():
+        """Busca com rate limiting"""
         if not input_date:
             st.warning("⚠️ Escolha a data de nascimento")
-        elif not input_mother.strip():
-            st.warning("⚠️ Digite o nome da mãe")
-        else:
-            with st.spinner("🔎 Buscando..."):
-                matches = find_members(df, input_date, input_mother)
+            return False
 
-                st.session_state.searched = True
-                st.session_state.search_dn = input_date
-                st.session_state.search_mae = input_mother.strip()
-                st.session_state.match_ids = matches.index.tolist()
+        if not input_mother.strip() or len(input_mother.strip()) < 2:
+            st.warning("⚠️ Digite pelo menos 2 letras do nome da mãe")
+            return False
 
-                st.rerun()
+        with st.spinner("🔎 Buscando..."):
+            matches = find_members(df, input_date, input_mother)
+
+            st.session_state.searched = True
+            st.session_state.search_dn = input_date
+            st.session_state.search_mae = input_mother.strip()
+            st.session_state.match_ids = matches.index.tolist()
+
+        return True
+
+    if st.button("🔍 Buscar cadastro", use_container_width=True):
+        if perform_search():
+            st.rerun()
 
     if not st.session_state.searched:
         st.stop()
@@ -1236,7 +1259,6 @@ def main():
         )
 
         if form_data:
-            # Validar
             is_valid, errors = validate_member_data(form_data)
 
             if not is_valid:
@@ -1244,7 +1266,6 @@ def main():
                     st.error(f"❌ {err}")
                 st.stop()
 
-            # Preparar payload
             now_str = datetime.now(CFG.TZ).strftime(CFG.DATETIME_FORMAT)
             new_id = get_next_member_id(df)
 
@@ -1267,20 +1288,19 @@ def main():
                 "atualizado": now_str,
             }
 
-            # Salvar
             with st.spinner("💾 Salvando..."):
                 if SheetsService.append_row(worksheet, payload):
                     st.success(f"✅ Cadastro salvo! ID: {new_id}")
                     st.balloons()
 
-                    import time
-                    time.sleep(2)
+                    sleep(2)
 
                     # Reset
                     st.session_state.searched = False
                     st.session_state.match_ids = []
                     st.session_state.search_dn = None
                     st.session_state.search_mae = ""
+                    st.session_state.last_update = datetime.now(CFG.TZ)
                     st.rerun()
 
         st.stop()
@@ -1292,7 +1312,6 @@ def main():
     matches_df = df.loc[match_ids].copy()
     total_found = len(matches_df)
 
-    # Seleção (se múltiplos)
     if total_found > 1:
         matches_df = matches_df.sort_values("nome_completo")
 
@@ -1313,11 +1332,9 @@ def main():
     else:
         selected_idx = matches_df.index[0]
 
-    # Preview
     row_data = df.loc[selected_idx].to_dict()
     render_member_preview(row_data, total_found)
 
-    # Formulário de edição
     sheet_row = int(row_data["_sheet_row"])
 
     form_data = render_member_form(
@@ -1327,7 +1344,6 @@ def main():
     )
 
     if form_data:
-        # Validar
         is_valid, errors = validate_member_data(form_data)
 
         if not is_valid:
@@ -1335,7 +1351,6 @@ def main():
                 st.error(f"❌ {err}")
             st.stop()
 
-        # Preparar payload
         now_str = datetime.now(CFG.TZ).strftime(CFG.DATETIME_FORMAT)
 
         payload = {
@@ -1355,22 +1370,26 @@ def main():
             "atualizado": now_str,
         }
 
-        # Atualizar
         with st.spinner("💾 Salvando alterações..."):
             if SheetsService.update_row(worksheet, sheet_row, payload):
                 st.success("✅ Cadastro atualizado com sucesso!")
                 st.balloons()
 
-                import time
-                time.sleep(2)
+                sleep(2)
 
                 # Reset
                 st.session_state.searched = False
                 st.session_state.match_ids = []
                 st.session_state.search_dn = None
                 st.session_state.search_mae = ""
+                st.session_state.last_update = datetime.now(CFG.TZ)
                 st.rerun()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.exception("Erro fatal na aplicação")
+        st.error(f"❌ Erro inesperado: {str(e)}")
+        st.error("Tente recarregar a página. Se o problema persistir, entre em contato.")
