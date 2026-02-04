@@ -1101,7 +1101,7 @@ def render_member_form(
 
             with col_b:
                 if total_empty_recommended > 0:
-                    st.info(f"💡 {total_empty_recommended} campo(s) recomendado(s) vazio(s)", icon="💡")
+                    st.info(f"{total_empty_recommended} campo(s) recomendado(s) vazio(s)", icon="💡")
 
         st.caption("**Campos marcados com * são obrigatórios**")
 
