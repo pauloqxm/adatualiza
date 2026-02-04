@@ -1,3 +1,13 @@
+"""
+Sistema de Atualização de Cadastro - Assembleia de Deus
+Versão: 2.0.0
+Autor: Paulo
+Data: 2026
+
+Aplicação Streamlit moderna para gerenciamento de cadastros de membros
+com integração ao Google Sheets.
+"""
+
 import os
 import re
 import json
@@ -612,48 +622,53 @@ def render_css():
 
 
 def render_header(title: str):
-    """Header com logo"""
+    """Header com logo - CORRIGIDO"""
     logo_html = ""
 
     if os.path.exists(CFG.LOGO_PATH):
-        with open(CFG.LOGO_PATH, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-            logo_html = f"""
-            <img src='data:image/jpeg;base64,{b64}' 
-                 style='width:56px;height:56px;object-fit:contain;
-                        border-radius:12px;background:rgba(255,255,255,.15);
-                        padding:6px;' />
-            """
+        try:
+            with open(CFG.LOGO_PATH, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+                logo_html = f'<img src="data:image/jpeg;base64,{b64}" style="width:56px;height:56px;object-fit:contain;border-radius:12px;background:rgba(255,255,255,.15);padding:6px;" />'
+        except Exception:
+            pass  # Se falhar ao carregar logo, continua sem ela
 
-    st.markdown(f"""
-    <div style='background:linear-gradient(135deg,#1D4ED8,#0B3AA8);
+    header_html = f"""
+    <div style="background:linear-gradient(135deg,#1D4ED8,#0B3AA8);
                 color:white;border-radius:18px;padding:16px 18px;
                 box-shadow:0 10px 20px rgba(2,6,23,.08);margin-bottom:18px;
-                display:flex;align-items:center;gap:12px;'>
+                display:flex;align-items:center;gap:12px;">
         {logo_html}
         <div>
-            <h1 style='margin:0;font-size:1.25rem;font-weight:900;line-height:1.1;'>
+            <h1 style="margin:0;font-size:1.25rem;font-weight:900;line-height:1.1;">
                 {title}
             </h1>
-            <p style='margin:0;opacity:.95;font-weight:650;'>
+            <p style="margin:0;opacity:.95;font-weight:650;">
                 Digite data de nascimento e o primeiro nome da mãe
             </p>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+
+    st.markdown(header_html, unsafe_allow_html=True)
 
 
 def render_card_header(title: str, subtitle: str = ""):
     """Card header"""
-    components.html(f"""
+    subtitle_html = f'<div style="color:#475569;font-weight:650;">{subtitle}</div>' if subtitle else ''
+
+    html = f"""
     <div style="background:white;border:2px solid #DBEAFE;border-radius:18px;
                 padding:18px;box-shadow:0 10px 20px rgba(2,6,23,.08);margin:14px 0;">
         <div style="font-weight:900;color:#0B3AA8;font-size:1.15rem;margin-bottom:10px;">
             {title}
         </div>
-        {f'<div style="color:#475569;font-weight:650;">{subtitle}</div>' if subtitle else ''}
+        {subtitle_html}
     </div>
-    """, height=80 if subtitle else 60)
+    """
+
+    height = 100 if subtitle else 70
+    components.html(html, height=height)
 
 
 def render_member_preview(member: dict, total_found: int):
@@ -666,7 +681,7 @@ def render_member_preview(member: dict, total_found: int):
     dn = Formatters.parse_date(member.get("data_nasc"))
     data_str = html.escape(Formatters.date_br(dn))
 
-    components.html(f"""
+    html_content = f"""
     <div style="background:white;border:2px solid #DBEAFE;border-radius:18px;
                 padding:18px;box-shadow:0 10px 20px rgba(2,6,23,.08);margin:14px 0;">
         <div style="font-weight:900;color:#0B3AA8;font-size:1.15rem;margin-bottom:10px;">
@@ -696,7 +711,9 @@ def render_member_preview(member: dict, total_found: int):
             </div>
         </div>
     </div>
-    """, height=300)
+    """
+
+    components.html(html_content, height=320)
 
 
 # ============================================================================
