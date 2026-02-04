@@ -631,7 +631,7 @@ def render_header(title: str):
                 b64 = base64.b64encode(f.read()).decode()
                 logo_html = f'<img src="data:image/jpeg;base64,{b64}" style="width:56px;height:56px;object-fit:contain;border-radius:12px;background:rgba(255,255,255,.15);padding:6px;" />'
         except Exception:
-            pass  # Se falhar ao carregar logo, continua sem ela
+            pass
 
     header_html = f"""
     <div style="background:linear-gradient(135deg,#1D4ED8,#0B3AA8);
@@ -672,48 +672,278 @@ def render_card_header(title: str, subtitle: str = ""):
 
 
 def render_member_preview(member: dict, total_found: int):
-    """Preview do membro encontrado"""
+    """Preview do membro encontrado - DESIGN MODERNO"""
     import html
 
+    # Limpa e escapa dados
     nome = html.escape(TextUtils.clean(member.get("nome_completo", "")) or "(Sem nome)")
-    cong = html.escape(TextUtils.clean(member.get("congregacao", "")) or "sem informação")
-    mae = html.escape(TextUtils.clean(member.get("nome_mae", "")))
+    cong = html.escape(TextUtils.clean(member.get("congregacao", "")) or "Não informada")
+    mae = html.escape(TextUtils.clean(member.get("nome_mae", "")) or "Não informada")
+    pai = html.escape(TextUtils.clean(member.get("nome_pai", "")) or "Não informado")
+
     dn = Formatters.parse_date(member.get("data_nasc"))
     data_str = html.escape(Formatters.date_br(dn))
 
+    cpf = html.escape(Formatters.cpf(member.get("cpf", "")) or "Não informado")
+    whats = html.escape(Formatters.phone(member.get("whatsapp_telefone", "")) or "Não informado")
+
+    endereco = html.escape(TextUtils.clean(member.get("endereco", "")) or "Não informado")
+    bairro = html.escape(TextUtils.clean(member.get("bairro_distrito", "")) or "Não informado")
+
+    naturalidade = html.escape(TextUtils.clean(member.get("naturalidade", "")) or "Não informada")
+    nacionalidade = html.escape(TextUtils.clean(member.get("nacionalidade", "")) or "Não informada")
+    estado_civil = html.escape(TextUtils.clean(member.get("estado_civil", "")) or "Não informado")
+    batismo = html.escape(TextUtils.clean(member.get("data_batismo", "")) or "Não informada")
+
+    # Identifica campos vazios (que precisam atualização)
+    def is_missing(value):
+        return value in ["Não informado", "Não informada"]
+
+    def field_class(value):
+        return "field-missing" if is_missing(value) else "field-ok"
+
     html_content = f"""
-    <div style="background:white;border:2px solid #DBEAFE;border-radius:18px;
-                padding:18px;box-shadow:0 10px 20px rgba(2,6,23,.08);margin:14px 0;">
-        <div style="font-weight:900;color:#0B3AA8;font-size:1.15rem;margin-bottom:10px;">
-            Cadastro encontrado
+    <style>
+        .preview-card {{
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border: none;
+            border-radius: 24px;
+            padding: 0;
+            box-shadow: 
+                0 20px 50px rgba(2, 6, 23, 0.08),
+                0 0 0 1px rgba(29, 78, 216, 0.1);
+            margin: 20px 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }}
+
+        .preview-header {{
+            background: linear-gradient(135deg, #1D4ED8 0%, #0B3AA8 100%);
+            padding: 24px 28px;
+            color: white;
+        }}
+
+        .preview-title {{
+            font-size: 1.4rem;
+            font-weight: 900;
+            margin: 0 0 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+
+        .preview-subtitle {{
+            font-size: 0.95rem;
+            opacity: 0.95;
+            font-weight: 600;
+            margin: 0;
+        }}
+
+        .preview-body {{
+            padding: 28px;
+        }}
+
+        .member-name {{
+            font-size: 1.6rem;
+            font-weight: 900;
+            color: #0B3AA8;
+            margin: 0 0 6px 0;
+            line-height: 1.2;
+        }}
+
+        .member-cong {{
+            font-size: 1rem;
+            font-weight: 700;
+            color: #64748B;
+            margin: 0 0 24px 0;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #E0F2FE;
+        }}
+
+        .info-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }}
+
+        .info-item {{
+            background: white;
+            padding: 16px;
+            border-radius: 14px;
+            border: 2px solid #E0F2FE;
+            transition: all 0.2s ease;
+        }}
+
+        .info-item:hover {{
+            border-color: #BFDBFE;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(2, 6, 23, 0.06);
+        }}
+
+        .info-label {{
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #64748B;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0 0 6px 0;
+        }}
+
+        .info-value {{
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #1e293b;
+            margin: 0;
+            word-break: break-word;
+        }}
+
+        .field-ok .info-value {{
+            color: #0B3AA8;
+        }}
+
+        .field-missing {{
+            background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+            border: 2px solid #F59E0B;
+            position: relative;
+        }}
+
+        .field-missing::before {{
+            content: "⚠️";
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            font-size: 1.2rem;
+        }}
+
+        .field-missing .info-label {{
+            color: #92400E;
+        }}
+
+        .field-missing .info-value {{
+            color: #D97706;
+            font-style: italic;
+        }}
+
+        .section-divider {{
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #BFDBFE, transparent);
+            margin: 24px 0;
+            border: none;
+        }}
+
+        .update-hint {{
+            background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+            border-left: 4px solid #1D4ED8;
+            padding: 14px 18px;
+            border-radius: 12px;
+            margin-top: 24px;
+        }}
+
+        .update-hint-text {{
+            margin: 0;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #0B3AA8;
+        }}
+
+        .badge {{
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.25);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+        }}
+    </style>
+
+    <div class="preview-card">
+        <div class="preview-header">
+            <div class="preview-title">
+                ✓ Cadastro Encontrado
+                <span class="badge">{total_found} registro(s)</span>
+            </div>
+            <div class="preview-subtitle">
+                Revise as informações e atualize os campos em destaque
+            </div>
         </div>
-        <div style="color:#475569;font-weight:650;margin-bottom:12px;">
-            Encontramos {total_found} registro(s)
-        </div>
 
-        <div style="margin-top:12px;">
-            <div style="color:#475569;font-weight:650;"><b>Data de nascimento</b></div>
-            <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:10px;">
-                {data_str}
+        <div class="preview-body">
+            <h2 class="member-name">{nome}</h2>
+            <p class="member-cong">📍 Congregação: {cong}</p>
+
+            <div class="info-grid">
+                <div class="info-item field-ok">
+                    <div class="info-label">📅 Data de Nascimento</div>
+                    <div class="info-value">{data_str}</div>
+                </div>
+
+                <div class="info-item field-ok">
+                    <div class="info-label">👩 Nome da Mãe</div>
+                    <div class="info-value">{mae}</div>
+                </div>
+
+                <div class="info-item {field_class(pai)}">
+                    <div class="info-label">👨 Nome do Pai</div>
+                    <div class="info-value">{pai}</div>
+                </div>
+
+                <div class="info-item {field_class(cpf)}">
+                    <div class="info-label">🆔 CPF</div>
+                    <div class="info-value">{cpf}</div>
+                </div>
+
+                <div class="info-item {field_class(whats)}">
+                    <div class="info-label">📱 WhatsApp</div>
+                    <div class="info-value">{whats}</div>
+                </div>
+
+                <div class="info-item {field_class(estado_civil)}">
+                    <div class="info-label">💑 Estado Civil</div>
+                    <div class="info-value">{estado_civil}</div>
+                </div>
             </div>
 
-            <div style="color:#475569;font-weight:650;"><b>Nome da mãe</b></div>
-            <div style="font-weight:800;color:#0B3AA8;font-size:1.05rem;margin-bottom:12px;">
-                {mae}
+            <hr class="section-divider">
+
+            <div class="info-grid">
+                <div class="info-item {field_class(endereco)}">
+                    <div class="info-label">🏠 Endereço</div>
+                    <div class="info-value">{endereco}</div>
+                </div>
+
+                <div class="info-item {field_class(bairro)}">
+                    <div class="info-label">📍 Bairro</div>
+                    <div class="info-value">{bairro}</div>
+                </div>
+
+                <div class="info-item {field_class(naturalidade)}">
+                    <div class="info-label">🌍 Naturalidade</div>
+                    <div class="info-value">{naturalidade}</div>
+                </div>
+
+                <div class="info-item {field_class(nacionalidade)}">
+                    <div class="info-label">🌎 Nacionalidade</div>
+                    <div class="info-value">{nacionalidade}</div>
+                </div>
+
+                <div class="info-item {field_class(batismo)}">
+                    <div class="info-label">✝️ Data do Batismo</div>
+                    <div class="info-value">{batismo}</div>
+                </div>
             </div>
 
-            <div style="color:#475569;font-weight:650;"><b>Nome</b></div>
-            <div style="font-weight:900;color:#0B3AA8;font-size:1.15rem;">
-                {nome}
-            </div>
-            <div style="margin-top:6px;font-size:.92rem;font-weight:700;color:#64748B;">
-                Congregação: {cong}
+            <div class="update-hint">
+                <p class="update-hint-text">
+                    💡 Os campos destacados em amarelo precisam ser atualizados. 
+                    Preencha-os no formulário abaixo.
+                </p>
             </div>
         </div>
     </div>
     """
 
-    components.html(html_content, height=320)
+    components.html(html_content, height=750)
 
 
 # ============================================================================
