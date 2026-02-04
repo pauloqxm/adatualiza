@@ -3,16 +3,6 @@ Sistema de Atualização de Cadastro - Assembleia de Deus
 Versão: 3.0.0 (OTIMIZADA + UI APRIMORADA)
 Autor: Paulo
 Data: 2026
-
-MELHORIAS IMPLEMENTADAS:
-- ✅ Cache multinível com invalidação inteligente
-- ✅ Retry logic para operações críticas
-- ✅ Rate limiting e proteção CSRF
-- ✅ Logging estruturado
-- ✅ Performance monitoring
-- ✅ Validação aprimorada com sanitização
-- ✅ UI responsiva com campos vazios destacados visualmente
-- ✅ Animações sutis e gradientes atrativos
 """
 
 import os
@@ -25,7 +15,7 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
-from typing import Optional, Literal, Any, Dict, List
+from typing import Optional, Literal, Any
 from functools import lru_cache, wraps
 from enum import Enum
 from time import time, sleep
@@ -34,7 +24,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Lazy imports para performance
+# Lazy imports
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -45,7 +35,7 @@ except ImportError:
     st.error("📦 Instale: `pip install gspread google-auth`")
 
 # ============================================================================
-# LOGGING ESTRUTURADO
+# LOGGING
 # ============================================================================
 
 logging.basicConfig(
@@ -54,13 +44,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
-# DECORADORES DE PERFORMANCE E SEGURANÇA
+# DECORADORES
 # ============================================================================
 
 def retry_on_failure(max_attempts: int = 3, delay: float = 1.0):
-    """Decorator para retry automático em caso de falha"""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -77,9 +65,7 @@ def retry_on_failure(max_attempts: int = 3, delay: float = 1.0):
         return wrapper
     return decorator
 
-
 def rate_limit(max_calls: int = 10, time_window: int = 60):
-    """Rate limiting simples baseado em session_state"""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -103,9 +89,7 @@ def rate_limit(max_calls: int = 10, time_window: int = 60):
         return wrapper
     return decorator
 
-
 def measure_time(func):
-    """Mede tempo de execução de funções"""
     @wraps(func)
     def wrapper(*args, **kwargs):
         start = time()
@@ -115,13 +99,11 @@ def measure_time(func):
         return result
     return wrapper
 
-
 # ============================================================================
-# CONFIGURAÇÕES E ENUMS
+# CONFIGURAÇÕES
 # ============================================================================
 
 class EstadoCivil(str, Enum):
-    """Estados civis válidos"""
     SOLTEIRO = "SOLTEIRO"
     CASADO = "CASADO"
     UNIAO_ESTAVEL = "UNIÃO ESTÁVEL"
@@ -129,39 +111,26 @@ class EstadoCivil(str, Enum):
     VIUVO = "VIÚVO"
     OUTRO = "OUTRO"
 
-
 class Nacionalidade(str, Enum):
-    """Nacionalidades comuns"""
     BRASILEIRA = "BRASILEIRA"
     BRASILEIRO = "BRASILEIRO"
     OUTRA = "OUTRA"
 
-
 @dataclass(frozen=True)
 class Config:
-    """Configurações centralizadas e imutáveis"""
-
-    # App
     TITLE: str = "Sistema de Cadastro - Assembleia de Deus"
     VERSION: str = "3.0.0"
     ICON: str = "⛪"
     LOGO_PATH: str = "data/logo_ad.jpg"
-
-    # Timezone
     TZ: ZoneInfo = field(default_factory=lambda: ZoneInfo("America/Fortaleza"))
-
-    # Google Sheets
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
     WORKSHEET_GID: int = 1191582738
     CACHE_TTL: int = 60
-
-    # Performance
     MAX_RETRIES: int = 3
     RETRY_DELAY: float = 1.0
     RATE_LIMIT_CALLS: int = 10
     RATE_LIMIT_WINDOW: int = 60
 
-    # Schema
     SCHEMA: tuple = (
         "membro_id", "cod_membro", "data_nasc", "nome_mae", "nome_completo",
         "cpf", "whatsapp_telefone", "bairro_distrito", "endereco", "nome_pai",
@@ -169,7 +138,6 @@ class Config:
         "congregacao", "atualizado"
     )
 
-    # Campos obrigatórios
     REQUIRED: dict = field(default_factory=lambda: {
         "nome_completo": "Nome completo",
         "cpf": "CPF",
@@ -182,7 +150,6 @@ class Config:
         "congregacao": "Congregação",
     })
 
-    # Bairros de Iguatu-CE
     BAIRROS: tuple = (
         "Argentina Siqueira", "Belém", "Berilândia", "Centro", "Cohab",
         "Conjunto Esperança", "Damião Carneiro", "Depósito", 
@@ -194,36 +161,28 @@ class Config:
         "Vila Betânia", "Vila São Paulo"
     )
 
-    # Validações
     MIN_BIRTH_DATE: date = date(1900, 1, 1)
     CPF_LENGTH: int = 11
     PHONE_LENGTH: int = 11
     DATETIME_FORMAT: str = "%d/%m/%Y %H:%M:%S"
 
-
 CFG = Config()
-
 
 # ============================================================================
 # UTILITÁRIOS DE TEXTO
 # ============================================================================
 
 class TextUtils:
-    """Processamento de texto com cache para performance"""
-
     @staticmethod
     @lru_cache(maxsize=2048)
     def strip_accents(text: str) -> str:
-        """Remove acentos (cached)"""
         nfkd = unicodedata.normalize('NFKD', text)
         return ''.join(c for c in nfkd if not unicodedata.combining(c))
 
     @classmethod
     def normalize(cls, text: Any) -> str:
-        """Normaliza: remove acentos, lowercase, espaços"""
         if not text or (isinstance(text, float) and pd.isna(text)):
             return ""
-
         text = str(text).strip()
         text = cls.strip_accents(text)
         text = text.lower()
@@ -231,18 +190,15 @@ class TextUtils:
 
     @classmethod
     def first_token(cls, text: str) -> str:
-        """Primeira palavra normalizada"""
         normalized = cls.normalize(text)
         return normalized.split(' ', 1)[0] if normalized else ""
 
     @staticmethod
     def only_digits(value: Any) -> str:
-        """Extrai apenas dígitos"""
         return re.sub(r'\D', '', str(value or ''))
 
     @staticmethod
     def clean(value: Any) -> str:
-        """Limpa valores de células"""
         if value is None or (isinstance(value, float) and pd.isna(value)):
             return ""
         cleaned = str(value).strip()
@@ -250,18 +206,14 @@ class TextUtils:
 
     @staticmethod
     def is_empty(value: Any) -> bool:
-        """Verifica se está vazio"""
         return len(TextUtils.clean(value)) == 0
 
     @staticmethod
     def sanitize_input(value: str, max_length: int = 200) -> str:
-        """Sanitiza input do usuário"""
         if not value:
             return ""
-
         sanitized = re.sub(r'[<>\"\'%;()&+]', '', str(value))
         return sanitized[:max_length].strip()
-
 
 # ============================================================================
 # VALIDADORES
@@ -269,20 +221,15 @@ class TextUtils:
 
 @dataclass
 class ValidationResult:
-    """Resultado de validação"""
     is_valid: bool
     message: str = ""
 
     def __bool__(self) -> bool:
         return self.is_valid
 
-
 class Validators:
-    """Validadores de dados"""
-
     @staticmethod
     def cpf(cpf_input: str) -> ValidationResult:
-        """Valida CPF (algoritmo oficial)"""
         digits = TextUtils.only_digits(cpf_input)
 
         if len(digits) != 11:
@@ -307,7 +254,6 @@ class Validators:
 
     @staticmethod
     def phone(phone_input: str) -> ValidationResult:
-        """Valida telefone brasileiro"""
         digits = TextUtils.only_digits(phone_input)
 
         if len(digits) != 11:
@@ -324,7 +270,6 @@ class Validators:
 
     @staticmethod
     def birth_date(birth_date: Optional[date]) -> ValidationResult:
-        """Valida data de nascimento"""
         if not birth_date:
             return ValidationResult(False, "Data de nascimento obrigatória")
 
@@ -340,17 +285,13 @@ class Validators:
 
         return ValidationResult(True)
 
-
 # ============================================================================
 # FORMATADORES
 # ============================================================================
 
 class Formatters:
-    """Formatadores brasileiros"""
-
     @staticmethod
     def cpf(cpf_input: str) -> str:
-        """000.000.000-00"""
         digits = TextUtils.only_digits(cpf_input)
         if len(digits) != 11:
             return cpf_input
@@ -358,7 +299,6 @@ class Formatters:
 
     @staticmethod
     def phone(phone_input: str) -> str:
-        """(88) 9.9999-9999"""
         digits = TextUtils.only_digits(phone_input)
         if len(digits) != 11:
             return phone_input
@@ -366,12 +306,10 @@ class Formatters:
 
     @staticmethod
     def date_br(date_obj: Optional[date]) -> str:
-        """dd/mm/yyyy"""
         return date_obj.strftime("%d/%m/%Y") if date_obj else ""
 
     @staticmethod
     def parse_date(value: Any) -> Optional[date]:
-        """Parse flexível de datas"""
         if value is None or (isinstance(value, float) and pd.isna(value)):
             return None
 
@@ -395,14 +333,11 @@ class Formatters:
         except Exception:
             return None
 
-
 # ============================================================================
-# GOOGLE SHEETS SERVICE - OTIMIZADO
+# GOOGLE SHEETS SERVICE
 # ============================================================================
 
 class SheetsService:
-    """Gerenciador Google Sheets (Singleton Thread-Safe)"""
-
     _instance = None
     _client = None
     _lock = None
@@ -419,7 +354,6 @@ class SheetsService:
 
     @property
     def client(self):
-        """Cliente autenticado (cached e thread-safe)"""
         if self._client:
             return self._client
 
@@ -432,7 +366,6 @@ class SheetsService:
             return self._authenticate()
 
     def _authenticate(self):
-        """Método privado de autenticação"""
         if not GSPREAD_AVAILABLE:
             return None
 
@@ -458,7 +391,6 @@ class SheetsService:
 
     @staticmethod
     def _load_credentials() -> Optional[dict]:
-        """Carrega credenciais"""
         if "gcp_service_account" in st.secrets:
             return dict(st.secrets["gcp_service_account"])
 
@@ -475,7 +407,6 @@ class SheetsService:
 
     @retry_on_failure(max_attempts=CFG.MAX_RETRIES, delay=CFG.RETRY_DELAY)
     def get_worksheet(self):
-        """Obtém worksheet pelo GID com retry"""
         if not self.client:
             return None
 
@@ -495,7 +426,6 @@ class SheetsService:
     @st.cache_data(ttl=CFG.CACHE_TTL, show_spinner=False)
     @measure_time
     def load_dataframe(_worksheet) -> pd.DataFrame:
-        """Carrega dados (cached 60s)"""
         if not _worksheet:
             return pd.DataFrame()
 
@@ -527,7 +457,6 @@ class SheetsService:
     @staticmethod
     @retry_on_failure(max_attempts=CFG.MAX_RETRIES, delay=CFG.RETRY_DELAY)
     def append_row(worksheet, data: dict) -> bool:
-        """Adiciona linha com retry"""
         if not worksheet:
             return False
 
@@ -546,7 +475,6 @@ class SheetsService:
     @staticmethod
     @retry_on_failure(max_attempts=CFG.MAX_RETRIES, delay=CFG.RETRY_DELAY)
     def update_row(worksheet, row_num: int, data: dict) -> bool:
-        """Atualiza linha com retry"""
         if not worksheet:
             return False
 
@@ -576,13 +504,11 @@ class SheetsService:
 
     @staticmethod
     def _num_to_col(n: int) -> str:
-        """1=A, 27=AA"""
         result = ""
         while n > 0:
             n, r = divmod(n - 1, 26)
             result = chr(65 + r) + result
         return result
-
 
 # ============================================================================
 # LÓGICA DE NEGÓCIO
@@ -590,7 +516,6 @@ class SheetsService:
 
 @measure_time
 def find_members(df: pd.DataFrame, birth_date: date, mother_name: str) -> pd.DataFrame:
-    """Busca membros"""
     mother_first = TextUtils.first_token(mother_name)
 
     if not mother_first or len(mother_first) < 2:
@@ -604,9 +529,7 @@ def find_members(df: pd.DataFrame, birth_date: date, mother_name: str) -> pd.Dat
     logger.info(f"Encontrados {len(result)} registros")
     return result
 
-
 def validate_member_data(data: dict) -> tuple[bool, list[str]]:
-    """Valida dados completos"""
     errors = []
 
     sanitized_data = {
@@ -641,9 +564,7 @@ def validate_member_data(data: dict) -> tuple[bool, list[str]]:
 
     return (len(errors) == 0, errors)
 
-
 def get_next_member_id(df: pd.DataFrame) -> int:
-    """Gera próximo ID"""
     if df.empty or "membro_id" not in df.columns:
         return 1
 
@@ -656,10 +577,8 @@ def get_next_member_id(df: pd.DataFrame) -> int:
         return next_id
     return 1
 
-
 @st.cache_data(ttl=300)
 def build_dropdown_options(df_hash: str, field: str) -> list[str]:
-    """Constrói opções com cache"""
     df = st.session_state.get('_cached_df')
     if df is None or df.empty or field not in df.columns:
         return []
@@ -682,13 +601,11 @@ def build_dropdown_options(df_hash: str, field: str) -> list[str]:
 
     return unique or ["OUTRO"]
 
-
 # ============================================================================
 # UI COMPONENTS
 # ============================================================================
 
 def render_css():
-    """CSS moderno otimizado"""
     st.markdown("""
     <style>
     :root {
@@ -703,17 +620,58 @@ def render_css():
         background: linear-gradient(135deg, #EFF6FF 0%, #FFF 55%, #E0F2FE 100%);
     }
 
-    .stTextInput input, .stSelectbox select, .stDateInput input {
+    /* Campos normais */
+    .stTextInput > div > div > input,
+    .stSelectbox > div > div > select,
+    .stDateInput > div > div > input {
         border-radius: 12px !important;
         border: 2px solid #BFDBFE !important;
         padding: 12px !important;
         transition: all 0.2s ease !important;
-        will-change: border-color, box-shadow;
     }
 
-    .stTextInput input:focus, .stSelectbox select:focus {
+    .stTextInput > div > div > input:focus,
+    .stSelectbox > div > div > select:focus,
+    .stDateInput > div > div > input:focus {
         border-color: var(--primary) !important;
         box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1) !important;
+    }
+
+    /* Animação de pulso */
+    @keyframes glow-pulse {
+        0%, 100% { 
+            box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.4);
+        }
+        50% { 
+            box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.2);
+        }
+    }
+
+    /* Campos vazios OBRIGATÓRIOS - classe aplicada via data-testid */
+    [data-testid="stTextInput"][data-empty="required"] > div > div > input,
+    [data-testid="stSelectbox"][data-empty="required"] > div > div > select {
+        border: 2.5px solid #FB923C !important;
+        background: linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%) !important;
+        animation: glow-pulse 2s infinite !important;
+    }
+
+    [data-testid="stTextInput"][data-empty="required"] > div > div > input:focus,
+    [data-testid="stSelectbox"][data-empty="required"] > div > div > select:focus {
+        border-color: #F97316 !important;
+        box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.25) !important;
+    }
+
+    /* Campos vazios RECOMENDADOS */
+    [data-testid="stTextInput"][data-empty="recommended"] > div > div > input,
+    [data-testid="stSelectbox"][data-empty="recommended"] > div > div > select {
+        border: 2px solid #60A5FA !important;
+        background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%) !important;
+    }
+
+    [data-testid="stTextInput"][data-empty="recommended"] > div > div > input:focus,
+    [data-testid="stSelectbox"][data-empty="recommended"] > div > div > select:focus {
+        border-color: #3B82F6 !important;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
     }
 
     div.stButton > button {
@@ -726,28 +684,16 @@ def render_css():
         width: 100%;
         box-shadow: var(--shadow);
         transition: transform 0.2s ease;
-        will-change: transform;
     }
 
     div.stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 12px 24px rgba(2, 6, 23, .12);
     }
-
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-    }
-
-    .loading {
-        animation: pulse 1.5s ease-in-out infinite;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-
 def render_header(title: str):
-    """Header otimizado"""
     logo_html = ""
 
     if os.path.exists(CFG.LOGO_PATH):
@@ -779,9 +725,7 @@ def render_header(title: str):
 
     st.markdown(header_html, unsafe_allow_html=True)
 
-
 def render_card_header(title: str, subtitle: str = ""):
-    """Card header"""
     subtitle_html = f'<div style="color:#475569;font-weight:650;">{subtitle}</div>' if subtitle else ''
 
     html = f"""
@@ -797,9 +741,7 @@ def render_card_header(title: str, subtitle: str = ""):
     height = 100 if subtitle else 70
     components.html(html, height=height)
 
-
 def render_member_preview(member: dict, total_found: int):
-    """Preview otimizado"""
     import html
 
     nome = html.escape(TextUtils.clean(member.get("nome_completo", "")) or "(Sem nome)")
@@ -892,9 +834,8 @@ def render_member_preview(member: dict, total_found: int):
 
     components.html(html_content, height=280)
 
-
 # ============================================================================
-# FORMULÁRIO COM CAMPOS VAZIOS DESTACADOS VISUALMENTE
+# FORMULÁRIO COM DESTAQUE VISUAL INTEGRADO
 # ============================================================================
 
 def render_member_form(
@@ -902,7 +843,7 @@ def render_member_form(
     initial_data: Optional[dict] = None,
     dropdown_opts: Optional[dict] = None
 ) -> Optional[dict]:
-    """Formulário com campos vazios destacados DIRETAMENTE no input"""
+    """Formulário com campos vazios destacados visualmente"""
 
     initial_data = initial_data or {}
     dropdown_opts = dropdown_opts or {}
@@ -923,66 +864,6 @@ def render_member_form(
         'batismo': TextUtils.is_empty(initial_data.get("data_batismo", "")),
         'congregacao': TextUtils.is_empty(initial_data.get("congregacao", "")),
     }
-
-    # CSS para destacar campos vazios DIRETAMENTE nos inputs
-    st.markdown("""
-    <style>
-    /* Animação de brilho suave */
-    @keyframes glow-pulse {
-        0%, 100% { 
-            box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.4);
-        }
-        50% { 
-            box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.2);
-        }
-    }
-
-    /* Campos obrigatórios vazios - LARANJA */
-    .empty-required input,
-    .empty-required select {
-        border: 2.5px solid #FB923C !important;
-        background: linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%) !important;
-        animation: glow-pulse 2s infinite !important;
-        box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.15) !important;
-    }
-
-    .empty-required input:focus,
-    .empty-required select:focus {
-        border-color: #F97316 !important;
-        box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.25) !important;
-    }
-
-    /* Campos recomendados vazios - AZUL CLARO */
-    .empty-recommended input,
-    .empty-recommended select {
-        border: 2px solid #60A5FA !important;
-        background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%) !important;
-        box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1) !important;
-    }
-
-    .empty-recommended input:focus,
-    .empty-recommended select:focus {
-        border-color: #3B82F6 !important;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
-    }
-
-    /* Labels com destaque */
-    .empty-required label,
-    .empty-recommended label {
-        font-weight: 700 !important;
-    }
-
-    .empty-required label::before {
-        content: "⚠️ ";
-        margin-right: 4px;
-    }
-
-    .empty-recommended label::before {
-        content: "💡 ";
-        margin-right: 4px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
     with st.form(f"{mode}_member_form", clear_on_submit=False):
         st.markdown("### 📋 Dados pessoais")
@@ -1006,70 +887,77 @@ def render_member_form(
             )
 
         with col2:
-            # Container com classe CSS para campo vazio
-            if empty_fields['cpf']:
-                st.markdown('<div class="empty-required">', unsafe_allow_html=True)
-
+            cpf_label = "⚠️ CPF * (campo vazio)" if empty_fields['cpf'] else "CPF *"
             cpf_input = st.text_input(
-                "CPF *",
+                cpf_label,
                 value=Formatters.cpf(initial_data.get("cpf", "")),
                 placeholder="000.000.000-00",
                 key=f"{key_prefix}cpf",
                 max_chars=14,
-                help="⚠️ Campo obrigatório - preencher" if empty_fields['cpf'] else None
+                help="Campo obrigatório - preencher" if empty_fields['cpf'] else None
             )
-
+            # Aplica classe CSS via JavaScript
             if empty_fields['cpf']:
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <script>
+                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
+                inputs[inputs.length-1].setAttribute('data-empty', 'required');
+                </script>
+                """, unsafe_allow_html=True)
 
-        # WhatsApp com destaque
-        if empty_fields['whatsapp']:
-            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
-
+        whats_label = "⚠️ WhatsApp/Telefone * (campo vazio)" if empty_fields['whatsapp'] else "WhatsApp/Telefone *"
         whats_input = st.text_input(
-            "WhatsApp/Telefone *",
+            whats_label,
             value=Formatters.phone(initial_data.get("whatsapp_telefone", "")),
             placeholder="(88) 9.9999-9999",
             key=f"{key_prefix}whats",
             max_chars=15,
-            help="⚠️ Campo obrigatório - preencher" if empty_fields['whatsapp'] else None
+            help="Campo obrigatório - preencher" if empty_fields['whatsapp'] else None
         )
-
         if empty_fields['whatsapp']:
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("""
+            <script>
+            var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
+            inputs[inputs.length-1].setAttribute('data-empty', 'required');
+            </script>
+            """, unsafe_allow_html=True)
 
         st.markdown("### 📍 Endereço")
 
         bairro_current = TextUtils.clean(initial_data.get("bairro_distrito", ""))
         bairro_idx = CFG.BAIRROS.index(bairro_current) if bairro_current in CFG.BAIRROS else 0
 
-        if empty_fields['bairro']:
-            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
-
+        bairro_label = "⚠️ Bairro/Distrito * (campo vazio)" if empty_fields['bairro'] else "Bairro/Distrito *"
         bairro = st.selectbox(
-            "Bairro/Distrito *",
+            bairro_label,
             options=CFG.BAIRROS,
             index=bairro_idx,
             key=f"{key_prefix}bairro",
-            help="⚠️ Campo obrigatório - selecionar" if empty_fields['bairro'] else None
+            help="Campo obrigatório - selecionar" if empty_fields['bairro'] else None
         )
-
         if empty_fields['bairro']:
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("""
+            <script>
+            var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
+            selects[selects.length-1].setAttribute('data-empty', 'required');
+            </script>
+            """, unsafe_allow_html=True)
 
-        if empty_fields['endereco']:
-            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
-
+        endereco_label = "⚠️ Endereço completo * (campo vazio)" if empty_fields['endereco'] else "Endereço completo *"
         endereco = st.text_input(
-            "Endereço completo *",
+            endereco_label,
             value=TextUtils.clean(initial_data.get("endereco", "")),
             key=f"{key_prefix}endereco",
             placeholder="Rua, número, complemento",
-            help="⚠️ Campo obrigatório - preencher" if empty_fields['endereco'] else None
+            help="Campo obrigatório - preencher" if empty_fields['endereco'] else None
         )
-
         if empty_fields['endereco']:
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("""
+            <script>
+            var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
+            inputs[inputs.length-1].setAttribute('data-empty', 'required');
+            </script>
+            """, unsafe_allow_html=True)
 
         st.markdown("### 👨‍👩‍👧 Filiação")
 
@@ -1082,108 +970,120 @@ def render_member_form(
             )
 
         with col2:
-            if empty_fields['pai']:
-                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
-
+            pai_label = "💡 Nome do pai (recomendado)" if empty_fields['pai'] else "Nome do pai"
             pai = st.text_input(
-                "Nome do pai",
+                pai_label,
                 value=TextUtils.clean(initial_data.get("nome_pai", "")),
                 key=f"{key_prefix}pai",
-                help="💡 Recomendado preencher" if empty_fields['pai'] else None
+                help="Recomendado preencher" if empty_fields['pai'] else None
             )
-
             if empty_fields['pai']:
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <script>
+                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
+                inputs[inputs.length-1].setAttribute('data-empty', 'recommended');
+                </script>
+                """, unsafe_allow_html=True)
 
         st.markdown("### 📝 Dados complementares")
 
         col1, col2 = st.columns(2)
         with col1:
-            if empty_fields['naturalidade']:
-                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
-
+            nat_label = "💡 Naturalidade (recomendado)" if empty_fields['naturalidade'] else "Naturalidade"
             naturalidade = st.text_input(
-                "Naturalidade",
+                nat_label,
                 value=TextUtils.clean(initial_data.get("naturalidade", "")),
                 key=f"{key_prefix}nat",
                 placeholder="Cidade de nascimento",
-                help="💡 Recomendado preencher" if empty_fields['naturalidade'] else None
+                help="Recomendado preencher" if empty_fields['naturalidade'] else None
             )
-
             if empty_fields['naturalidade']:
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <script>
+                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
+                inputs[inputs.length-1].setAttribute('data-empty', 'recommended');
+                </script>
+                """, unsafe_allow_html=True)
 
         with col2:
             nac_opts = dropdown_opts.get("nacionalidade", ["BRASILEIRA", "BRASILEIRO", "OUTRA"])
             nac_current = TextUtils.clean(initial_data.get("nacionalidade", "")).upper()
             nac_idx = nac_opts.index(nac_current) if nac_current in nac_opts else 0
 
-            if empty_fields['nacionalidade']:
-                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
-
+            nac_label = "💡 Nacionalidade (recomendado)" if empty_fields['nacionalidade'] else "Nacionalidade"
             nacionalidade = st.selectbox(
-                "Nacionalidade",
+                nac_label,
                 options=nac_opts,
                 index=nac_idx,
                 key=f"{key_prefix}nac",
-                help="💡 Recomendado preencher" if empty_fields['nacionalidade'] else None
+                help="Recomendado preencher" if empty_fields['nacionalidade'] else None
             )
-
             if empty_fields['nacionalidade']:
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <script>
+                var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
+                selects[selects.length-1].setAttribute('data-empty', 'recommended');
+                </script>
+                """, unsafe_allow_html=True)
 
         ec_opts = dropdown_opts.get("estado_civil", [e.value for e in EstadoCivil])
         ec_current = TextUtils.clean(initial_data.get("estado_civil", "")).upper()
         ec_idx = ec_opts.index(ec_current) if ec_current in ec_opts else 0
 
-        if empty_fields['estado_civil']:
-            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
-
+        ec_label = "⚠️ Estado civil * (campo vazio)" if empty_fields['estado_civil'] else "Estado civil *"
         estado_civil = st.selectbox(
-            "Estado civil *",
+            ec_label,
             options=ec_opts,
             index=ec_idx,
             key=f"{key_prefix}ec",
-            help="⚠️ Campo obrigatório - selecionar" if empty_fields['estado_civil'] else None
+            help="Campo obrigatório - selecionar" if empty_fields['estado_civil'] else None
         )
-
         if empty_fields['estado_civil']:
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("""
+            <script>
+            var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
+            selects[selects.length-1].setAttribute('data-empty', 'required');
+            </script>
+            """, unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
         with col1:
-            if empty_fields['batismo']:
-                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
-
+            bat_label = "💡 Data do batismo (recomendado)" if empty_fields['batismo'] else "Data do batismo"
             batismo = st.text_input(
-                "Data do batismo",
+                bat_label,
                 value=TextUtils.clean(initial_data.get("data_batismo", "")),
                 key=f"{key_prefix}bat",
                 placeholder="Ex.: 05/12/1992",
-                help="💡 Recomendado preencher" if empty_fields['batismo'] else None
+                help="Recomendado preencher" if empty_fields['batismo'] else None
             )
-
             if empty_fields['batismo']:
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <script>
+                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
+                inputs[inputs.length-1].setAttribute('data-empty', 'recommended');
+                </script>
+                """, unsafe_allow_html=True)
 
         with col2:
             cong_opts = dropdown_opts.get("congregacao", ["SEDE", "OUTRA"])
             cong_current = TextUtils.clean(initial_data.get("congregacao", "")).upper()
             cong_idx = cong_opts.index(cong_current) if cong_current in cong_opts else 0
 
-            if empty_fields['congregacao']:
-                st.markdown('<div class="empty-required">', unsafe_allow_html=True)
-
+            cong_label = "⚠️ Congregação * (campo vazio)" if empty_fields['congregacao'] else "Congregação *"
             congregacao = st.selectbox(
-                "Congregação *",
+                cong_label,
                 options=cong_opts,
                 index=cong_idx,
                 key=f"{key_prefix}cong",
-                help="⚠️ Campo obrigatório - selecionar" if empty_fields['congregacao'] else None
+                help="Campo obrigatório - selecionar" if empty_fields['congregacao'] else None
             )
-
             if empty_fields['congregacao']:
-                st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("""
+                <script>
+                var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
+                selects[selects.length-1].setAttribute('data-empty', 'required');
+                </script>
+                """, unsafe_allow_html=True)
 
         st.divider()
 
@@ -1234,14 +1134,11 @@ def render_member_form(
 
         return None
 
-
-
 # ============================================================================
-# MAIN APP - OTIMIZADO (CORRIGIDO)
+# MAIN APP
 # ============================================================================
 
 def initialize_session():
-    """Inicializa estado da sessão"""
     defaults = {
         "searched": False,
         "match_ids": [],
@@ -1255,11 +1152,8 @@ def initialize_session():
         if key not in st.session_state:
             st.session_state[key] = value
 
-
 @measure_time
 def main():
-    """Aplicação principal otimizada"""
-
     st.set_page_config(
         page_title=CFG.TITLE,
         page_icon=CFG.ICON,
@@ -1295,10 +1189,6 @@ def main():
         "congregacao": build_dropdown_options(df_hash, "congregacao"),
     }
 
-    # ========================================
-    # BUSCA COM RATE LIMITING
-    # ========================================
-
     render_card_header("🔍 Identificação do membro")
 
     col1, col2 = st.columns(2)
@@ -1323,7 +1213,6 @@ def main():
 
     @rate_limit(max_calls=CFG.RATE_LIMIT_CALLS, time_window=CFG.RATE_LIMIT_WINDOW)
     def perform_search():
-        """Busca com rate limiting"""
         if not input_date:
             st.warning("⚠️ Escolha a data de nascimento")
             return False
@@ -1352,10 +1241,6 @@ def main():
     st.divider()
 
     match_ids = st.session_state.match_ids
-
-    # ========================================
-    # NOVO CADASTRO
-    # ========================================
 
     if len(match_ids) == 0:
         render_card_header(
@@ -1417,10 +1302,6 @@ def main():
                     st.rerun()
 
         st.stop()
-
-    # ========================================
-    # EDITAR CADASTRO
-    # ========================================
 
     matches_df = df.loc[match_ids].copy()
     total_found = len(matches_df)
@@ -1505,4 +1386,3 @@ if __name__ == "__main__":
         logger.exception("Erro fatal na aplicação")
         st.error(f"❌ Erro inesperado: {str(e)}")
         st.error("Tente recarregar a página. Se o problema persistir, entre em contato.")
-
