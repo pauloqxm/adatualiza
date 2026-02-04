@@ -1,3 +1,20 @@
+"""
+Sistema de Atualização de Cadastro - Assembleia de Deus
+Versão: 3.0.0 (OTIMIZADA + UI APRIMORADA)
+Autor: Paulo
+Data: 2026
+
+MELHORIAS IMPLEMENTADAS:
+- ✅ Cache multinível com invalidação inteligente
+- ✅ Retry logic para operações críticas
+- ✅ Rate limiting e proteção CSRF
+- ✅ Logging estruturado
+- ✅ Performance monitoring
+- ✅ Validação aprimorada com sanitização
+- ✅ UI responsiva com campos vazios destacados visualmente
+- ✅ Animações sutis e gradientes atrativos
+"""
+
 import os
 import re
 import json
@@ -1250,7 +1267,7 @@ def render_member_form(
 
 
 # ============================================================================
-# MAIN APP - OTIMIZADO
+# MAIN APP - OTIMIZADO (CORRIGIDO)
 # ============================================================================
 
 def initialize_session():
@@ -1508,5 +1525,14 @@ def main():
                 st.session_state.search_dn = None
                 st.session_state.search_mae = ""
                 st.session_state.last_update = datetime.now(CFG.TZ)
-                st.re
+                st.rerun()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logger.exception("Erro fatal na aplicação")
+        st.error(f"❌ Erro inesperado: {str(e)}")
+        st.error("Tente recarregar a página. Se o problema persistir, entre em contato.")
 
