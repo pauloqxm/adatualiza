@@ -1,10 +1,3 @@
-"""
-Sistema de Atualização de Cadastro - Assembleia de Deus
-Versão: 3.0.0 (OTIMIZADA + UI APRIMORADA)
-Autor: Paulo
-Data: 2026
-"""
-
 import os
 import re
 import json
@@ -717,7 +710,7 @@ def render_header(title: str):
                 {title} <span style="font-size:0.7rem;opacity:0.8;">v{CFG.VERSION}</span>
             </h1>
             <p style="margin:0;opacity:.95;font-weight:650;">
-                Digite data de nascimento e o primeiro nome da mãe
+                Atualização cadastral de membros
             </p>
         </div>
     </div>
@@ -1208,7 +1201,7 @@ def main():
             "Nome da mãe",
             value=st.session_state.search_mae,
             placeholder="Ex.: Maria",
-            help="Apenas o primeiro nome (mínimo 2 letras)"
+            help="Insira o nome completo"
         )
 
     @rate_limit(max_calls=CFG.RATE_LIMIT_CALLS, time_window=CFG.RATE_LIMIT_WINDOW)
