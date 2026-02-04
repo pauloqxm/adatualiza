@@ -1097,7 +1097,7 @@ def render_member_form(
 
             with col_a:
                 if total_empty_required > 0:
-                    st.warning(f"⚠️ {total_empty_required} campo(s) obrigatório(s) vazio(s)", icon="⚠️")
+                    st.warning(f"{total_empty_required} campo(s) obrigatório(s) vazio(s)", icon="⚠️")
 
             with col_b:
                 if total_empty_recommended > 0:
