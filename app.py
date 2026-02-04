@@ -902,7 +902,7 @@ def render_member_form(
     initial_data: Optional[dict] = None,
     dropdown_opts: Optional[dict] = None
 ) -> Optional[dict]:
-    """Formulário com destaque visual ATRAENTE para campos vazios"""
+    """Formulário com campos vazios destacados DIRETAMENTE no input"""
 
     initial_data = initial_data or {}
     dropdown_opts = dropdown_opts or {}
@@ -924,63 +924,62 @@ def render_member_form(
         'congregacao': TextUtils.is_empty(initial_data.get("congregacao", "")),
     }
 
-    # CSS para campos vazios com animação
+    # CSS para destacar campos vazios DIRETAMENTE nos inputs
     st.markdown("""
     <style>
-    @keyframes gentle-pulse {
+    /* Animação de brilho suave */
+    @keyframes glow-pulse {
         0%, 100% { 
             box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.4);
         }
         50% { 
-            box-shadow: 0 0 0 8px rgba(251, 146, 60, 0);
+            box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.2);
         }
     }
 
-    .empty-field-alert {
-        background: linear-gradient(135deg, #FEF3C7 0%, #FED7AA 100%);
-        border: 2px solid #FB923C;
-        border-radius: 12px;
-        padding: 12px 16px;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        animation: gentle-pulse 2s infinite;
-        box-shadow: 0 4px 12px rgba(251, 146, 60, 0.15);
+    /* Campos obrigatórios vazios - LARANJA */
+    .empty-required input,
+    .empty-required select {
+        border: 2.5px solid #FB923C !important;
+        background: linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%) !important;
+        animation: glow-pulse 2s infinite !important;
+        box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.15) !important;
     }
 
-    .empty-field-alert .icon {
-        font-size: 1.3rem;
-        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+    .empty-required input:focus,
+    .empty-required select:focus {
+        border-color: #F97316 !important;
+        box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.25) !important;
     }
 
-    .empty-field-alert .text {
-        color: #C2410C;
-        font-weight: 700;
-        font-size: 0.95rem;
-        letter-spacing: -0.01em;
+    /* Campos recomendados vazios - AZUL CLARO */
+    .empty-recommended input,
+    .empty-recommended select {
+        border: 2px solid #60A5FA !important;
+        background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%) !important;
+        box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1) !important;
     }
 
-    .recommended-field-alert {
-        background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
-        border: 2px solid #3B82F6;
-        border-radius: 12px;
-        padding: 10px 14px;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+    .empty-recommended input:focus,
+    .empty-recommended select:focus {
+        border-color: #3B82F6 !important;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
     }
 
-    .recommended-field-alert .icon {
-        font-size: 1.2rem;
+    /* Labels com destaque */
+    .empty-required label,
+    .empty-recommended label {
+        font-weight: 700 !important;
     }
 
-    .recommended-field-alert .text {
-        color: #1E40AF;
-        font-weight: 600;
-        font-size: 0.9rem;
+    .empty-required label::before {
+        content: "⚠️ ";
+        margin-right: 4px;
+    }
+
+    .empty-recommended label::before {
+        content: "💡 ";
+        margin-right: 4px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -1007,13 +1006,9 @@ def render_member_form(
             )
 
         with col2:
+            # Container com classe CSS para campo vazio
             if empty_fields['cpf']:
-                st.markdown("""
-                <div class="empty-field-alert">
-                    <div class="icon">⚠️</div>
-                    <div class="text">CPF não informado</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown('<div class="empty-required">', unsafe_allow_html=True)
 
             cpf_input = st.text_input(
                 "CPF *",
@@ -1021,16 +1016,15 @@ def render_member_form(
                 placeholder="000.000.000-00",
                 key=f"{key_prefix}cpf",
                 max_chars=14,
-                help="Campo obrigatório - preencher" if empty_fields['cpf'] else None
+                help="⚠️ Campo obrigatório - preencher" if empty_fields['cpf'] else None
             )
 
+            if empty_fields['cpf']:
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        # WhatsApp com destaque
         if empty_fields['whatsapp']:
-            st.markdown("""
-            <div class="empty-field-alert">
-                <div class="icon">⚠️</div>
-                <div class="text">WhatsApp/Telefone não informado</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
 
         whats_input = st.text_input(
             "WhatsApp/Telefone *",
@@ -1038,8 +1032,11 @@ def render_member_form(
             placeholder="(88) 9.9999-9999",
             key=f"{key_prefix}whats",
             max_chars=15,
-            help="Campo obrigatório - preencher" if empty_fields['whatsapp'] else None
+            help="⚠️ Campo obrigatório - preencher" if empty_fields['whatsapp'] else None
         )
+
+        if empty_fields['whatsapp']:
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("### 📍 Endereço")
 
@@ -1047,36 +1044,32 @@ def render_member_form(
         bairro_idx = CFG.BAIRROS.index(bairro_current) if bairro_current in CFG.BAIRROS else 0
 
         if empty_fields['bairro']:
-            st.markdown("""
-            <div class="empty-field-alert">
-                <div class="icon">⚠️</div>
-                <div class="text">Bairro/Distrito não informado</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
 
         bairro = st.selectbox(
             "Bairro/Distrito *",
             options=CFG.BAIRROS,
             index=bairro_idx,
             key=f"{key_prefix}bairro",
-            help="Campo obrigatório - selecionar" if empty_fields['bairro'] else None
+            help="⚠️ Campo obrigatório - selecionar" if empty_fields['bairro'] else None
         )
 
+        if empty_fields['bairro']:
+            st.markdown('</div>', unsafe_allow_html=True)
+
         if empty_fields['endereco']:
-            st.markdown("""
-            <div class="empty-field-alert">
-                <div class="icon">⚠️</div>
-                <div class="text">Endereço não informado</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
 
         endereco = st.text_input(
             "Endereço completo *",
             value=TextUtils.clean(initial_data.get("endereco", "")),
             key=f"{key_prefix}endereco",
             placeholder="Rua, número, complemento",
-            help="Campo obrigatório - preencher" if empty_fields['endereco'] else None
+            help="⚠️ Campo obrigatório - preencher" if empty_fields['endereco'] else None
         )
+
+        if empty_fields['endereco']:
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("### 👨‍👩‍👧 Filiação")
 
@@ -1090,39 +1083,35 @@ def render_member_form(
 
         with col2:
             if empty_fields['pai']:
-                st.markdown("""
-                <div class="recommended-field-alert">
-                    <div class="icon">💡</div>
-                    <div class="text">Nome do pai recomendado</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
 
             pai = st.text_input(
                 "Nome do pai",
                 value=TextUtils.clean(initial_data.get("nome_pai", "")),
                 key=f"{key_prefix}pai",
-                help="Recomendado preencher" if empty_fields['pai'] else None
+                help="💡 Recomendado preencher" if empty_fields['pai'] else None
             )
+
+            if empty_fields['pai']:
+                st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("### 📝 Dados complementares")
 
         col1, col2 = st.columns(2)
         with col1:
             if empty_fields['naturalidade']:
-                st.markdown("""
-                <div class="recommended-field-alert">
-                    <div class="icon">💡</div>
-                    <div class="text">Naturalidade recomendada</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
 
             naturalidade = st.text_input(
                 "Naturalidade",
                 value=TextUtils.clean(initial_data.get("naturalidade", "")),
                 key=f"{key_prefix}nat",
                 placeholder="Cidade de nascimento",
-                help="Recomendado preencher" if empty_fields['naturalidade'] else None
+                help="💡 Recomendado preencher" if empty_fields['naturalidade'] else None
             )
+
+            if empty_fields['naturalidade']:
+                st.markdown('</div>', unsafe_allow_html=True)
 
         with col2:
             nac_opts = dropdown_opts.get("nacionalidade", ["BRASILEIRA", "BRASILEIRO", "OUTRA"])
@@ -1130,58 +1119,52 @@ def render_member_form(
             nac_idx = nac_opts.index(nac_current) if nac_current in nac_opts else 0
 
             if empty_fields['nacionalidade']:
-                st.markdown("""
-                <div class="recommended-field-alert">
-                    <div class="icon">💡</div>
-                    <div class="text">Nacionalidade recomendada</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
 
             nacionalidade = st.selectbox(
                 "Nacionalidade",
                 options=nac_opts,
                 index=nac_idx,
                 key=f"{key_prefix}nac",
-                help="Recomendado preencher" if empty_fields['nacionalidade'] else None
+                help="💡 Recomendado preencher" if empty_fields['nacionalidade'] else None
             )
+
+            if empty_fields['nacionalidade']:
+                st.markdown('</div>', unsafe_allow_html=True)
 
         ec_opts = dropdown_opts.get("estado_civil", [e.value for e in EstadoCivil])
         ec_current = TextUtils.clean(initial_data.get("estado_civil", "")).upper()
         ec_idx = ec_opts.index(ec_current) if ec_current in ec_opts else 0
 
         if empty_fields['estado_civil']:
-            st.markdown("""
-            <div class="empty-field-alert">
-                <div class="icon">⚠️</div>
-                <div class="text">Estado civil não informado</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown('<div class="empty-required">', unsafe_allow_html=True)
 
         estado_civil = st.selectbox(
             "Estado civil *",
             options=ec_opts,
             index=ec_idx,
             key=f"{key_prefix}ec",
-            help="Campo obrigatório - selecionar" if empty_fields['estado_civil'] else None
+            help="⚠️ Campo obrigatório - selecionar" if empty_fields['estado_civil'] else None
         )
+
+        if empty_fields['estado_civil']:
+            st.markdown('</div>', unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
         with col1:
             if empty_fields['batismo']:
-                st.markdown("""
-                <div class="recommended-field-alert">
-                    <div class="icon">💡</div>
-                    <div class="text">Data do batismo recomendada</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown('<div class="empty-recommended">', unsafe_allow_html=True)
 
             batismo = st.text_input(
                 "Data do batismo",
                 value=TextUtils.clean(initial_data.get("data_batismo", "")),
                 key=f"{key_prefix}bat",
                 placeholder="Ex.: 05/12/1992",
-                help="Recomendado preencher" if empty_fields['batismo'] else None
+                help="💡 Recomendado preencher" if empty_fields['batismo'] else None
             )
+
+            if empty_fields['batismo']:
+                st.markdown('</div>', unsafe_allow_html=True)
 
         with col2:
             cong_opts = dropdown_opts.get("congregacao", ["SEDE", "OUTRA"])
@@ -1189,24 +1172,22 @@ def render_member_form(
             cong_idx = cong_opts.index(cong_current) if cong_current in cong_opts else 0
 
             if empty_fields['congregacao']:
-                st.markdown("""
-                <div class="empty-field-alert">
-                    <div class="icon">⚠️</div>
-                    <div class="text">Congregação não informada</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown('<div class="empty-required">', unsafe_allow_html=True)
 
             congregacao = st.selectbox(
                 "Congregação *",
                 options=cong_opts,
                 index=cong_idx,
                 key=f"{key_prefix}cong",
-                help="Campo obrigatório - selecionar" if empty_fields['congregacao'] else None
+                help="⚠️ Campo obrigatório - selecionar" if empty_fields['congregacao'] else None
             )
+
+            if empty_fields['congregacao']:
+                st.markdown('</div>', unsafe_allow_html=True)
 
         st.divider()
 
-        # Resumo de campos pendentes
+        # Resumo compacto
         total_empty_required = sum([
             empty_fields['cpf'], empty_fields['whatsapp'], 
             empty_fields['endereco'], empty_fields['bairro'],
@@ -1223,23 +1204,11 @@ def render_member_form(
 
             with col_a:
                 if total_empty_required > 0:
-                    st.markdown(f"""
-                    <div style="background:#FEF3C7;border-left:4px solid #FB923C;padding:10px;border-radius:8px;margin-bottom:10px;">
-                        <div style="font-weight:700;color:#C2410C;font-size:0.9rem;">
-                            ⚠️ {total_empty_required} campo(s) obrigatório(s) vazio(s)
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.warning(f"⚠️ {total_empty_required} campo(s) obrigatório(s) vazio(s)", icon="⚠️")
 
             with col_b:
                 if total_empty_recommended > 0:
-                    st.markdown(f"""
-                    <div style="background:#DBEAFE;border-left:4px solid #3B82F6;padding:10px;border-radius:8px;margin-bottom:10px;">
-                        <div style="font-weight:700;color:#1E40AF;font-size:0.9rem;">
-                            💡 {total_empty_recommended} campo(s) recomendado(s) vazio(s)
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.info(f"💡 {total_empty_recommended} campo(s) recomendado(s) vazio(s)", icon="💡")
 
         st.caption("**Campos marcados com * são obrigatórios**")
 
@@ -1264,6 +1233,7 @@ def render_member_form(
             }
 
         return None
+
 
 
 # ============================================================================
