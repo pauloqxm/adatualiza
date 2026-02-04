@@ -1,13 +1,3 @@
-"""
-Sistema de Atualização de Cadastro - Assembleia de Deus
-Versão: 2.0.0
-Autor: Paulo
-Data: 2026
-
-Aplicação Streamlit moderna para gerenciamento de cadastros de membros
-com integração ao Google Sheets.
-"""
-
 import os
 import re
 import json
