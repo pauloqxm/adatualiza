@@ -55,7 +55,7 @@ def retry_on_failure(max_attempts: int = 3, delay: float = 1.0):
                         logger.error(f"Falha após {max_attempts} tentativas: {e}")
                         raise
                     logger.warning(f"Tentativa {attempt + 1} falhou: {e}. Retentando...")
-                    sleep(delay * (attempt + 1))  # Exponential backoff
+                    sleep(delay * (attempt + 1))
             return None
         return wrapper
     return decorator
@@ -72,7 +72,6 @@ def rate_limit(max_calls: int = 10, time_window: int = 60):
             if key not in st.session_state:
                 st.session_state[key] = []
 
-            # Remove chamadas antigas
             st.session_state[key] = [
                 t for t in st.session_state[key] 
                 if now - t < time_window
@@ -137,7 +136,7 @@ class Config:
     # Google Sheets
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
     WORKSHEET_GID: int = 1191582738
-    CACHE_TTL: int = 60  # Aumentado para 60s
+    CACHE_TTL: int = 60
 
     # Performance
     MAX_RETRIES: int = 3
@@ -189,7 +188,7 @@ CFG = Config()
 
 
 # ============================================================================
-# UTILITÁRIOS DE TEXTO (MANTIDOS - JÁ OTIMIZADOS)
+# UTILITÁRIOS DE TEXTO
 # ============================================================================
 
 class TextUtils:
@@ -243,15 +242,12 @@ class TextUtils:
         if not value:
             return ""
 
-        # Remove caracteres perigosos
         sanitized = re.sub(r'[<>\"\'%;()&+]', '', str(value))
-
-        # Limita tamanho
         return sanitized[:max_length].strip()
 
 
 # ============================================================================
-# VALIDADORES (MANTIDOS - JÁ OTIMIZADOS)
+# VALIDADORES
 # ============================================================================
 
 @dataclass
@@ -329,7 +325,7 @@ class Validators:
 
 
 # ============================================================================
-# FORMATADORES (MANTIDOS)
+# FORMATADORES
 # ============================================================================
 
 class Formatters:
@@ -412,7 +408,7 @@ class SheetsService:
 
         if self._lock:
             with self._lock:
-                if self._client:  # Double-check
+                if self._client:
                     return self._client
                 return self._authenticate()
         else:
@@ -445,17 +441,14 @@ class SheetsService:
 
     @staticmethod
     def _load_credentials() -> Optional[dict]:
-        """Carrega credenciais (prioridade: secrets > arquivo > env)"""
-        # 1. Streamlit Secrets
+        """Carrega credenciais"""
         if "gcp_service_account" in st.secrets:
             return dict(st.secrets["gcp_service_account"])
 
-        # 2. Arquivo local
         if os.path.exists("service_account.json"):
             with open("service_account.json", 'r') as f:
                 return json.load(f)
 
-        # 3. Env var
         env_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         if env_path and os.path.exists(env_path):
             with open(env_path, 'r') as f:
@@ -485,7 +478,7 @@ class SheetsService:
     @st.cache_data(ttl=CFG.CACHE_TTL, show_spinner=False)
     @measure_time
     def load_dataframe(_worksheet) -> pd.DataFrame:
-        """Carrega dados (cached 60s com medição de performance)"""
+        """Carrega dados (cached 60s)"""
         if not _worksheet:
             return pd.DataFrame()
 
@@ -500,12 +493,10 @@ class SheetsService:
             header, *rows = values
             df = pd.DataFrame(rows, columns=header)
 
-            # Garante colunas do schema
             for col in CFG.SCHEMA:
                 if col not in df.columns:
                     df[col] = ""
 
-            # Otimizações
             df["_sheet_row"] = range(2, len(df) + 2)
             df["_birth_date"] = df["data_nasc"].apply(Formatters.parse_date)
 
@@ -577,19 +568,18 @@ class SheetsService:
 
 
 # ============================================================================
-# LÓGICA DE NEGÓCIO (OTIMIZADA)
+# LÓGICA DE NEGÓCIO
 # ============================================================================
 
 @measure_time
 def find_members(df: pd.DataFrame, birth_date: date, mother_name: str) -> pd.DataFrame:
-    """Busca membros com validação aprimorada"""
+    """Busca membros"""
     mother_first = TextUtils.first_token(mother_name)
 
     if not mother_first or len(mother_first) < 2:
         logger.warning("Nome da mãe muito curto")
         return df.iloc[0:0].copy()
 
-    # Usa coluna já calculada no cache
     mask_date = df["_birth_date"] == birth_date
     mask_mother = df["nome_mae"].apply(lambda x: TextUtils.first_token(x) == mother_first)
 
@@ -599,16 +589,14 @@ def find_members(df: pd.DataFrame, birth_date: date, mother_name: str) -> pd.Dat
 
 
 def validate_member_data(data: dict) -> tuple[bool, list[str]]:
-    """Valida dados completos com sanitização"""
+    """Valida dados completos"""
     errors = []
 
-    # Sanitiza inputs
     sanitized_data = {
         k: TextUtils.sanitize_input(v) if isinstance(v, str) else v
         for k, v in data.items()
     }
 
-    # Campos obrigatórios
     for field, label in CFG.REQUIRED.items():
         value = sanitized_data.get(field)
         if field == "data_nasc":
@@ -618,7 +606,6 @@ def validate_member_data(data: dict) -> tuple[bool, list[str]]:
             if TextUtils.is_empty(value):
                 errors.append(f"{label} é obrigatório")
 
-    # Validações específicas
     cpf_result = Validators.cpf(sanitized_data.get('cpf', ''))
     if not cpf_result:
         errors.append(cpf_result.message)
@@ -639,7 +626,7 @@ def validate_member_data(data: dict) -> tuple[bool, list[str]]:
 
 
 def get_next_member_id(df: pd.DataFrame) -> int:
-    """Gera próximo ID com validação"""
+    """Gera próximo ID"""
     if df.empty or "membro_id" not in df.columns:
         return 1
 
@@ -653,10 +640,9 @@ def get_next_member_id(df: pd.DataFrame) -> int:
     return 1
 
 
-@st.cache_data(ttl=300)  # Cache de 5 minutos
+@st.cache_data(ttl=300)
 def build_dropdown_options(df_hash: str, field: str) -> list[str]:
-    """Constrói opções com cache por hash do DataFrame"""
-    # Carrega df do cache do Streamlit
+    """Constrói opções com cache"""
     df = st.session_state.get('_cached_df')
     if df is None or df.empty or field not in df.columns:
         return []
@@ -665,7 +651,6 @@ def build_dropdown_options(df_hash: str, field: str) -> list[str]:
     values = values[values != ""].tolist()
     unique = sorted(set(values), key=str.casefold)
 
-    # Defaults
     if field == "nacionalidade":
         defaults = ["BRASILEIRA", "BRASILEIRO", "OUTRA"]
         for d in defaults:
@@ -682,11 +667,11 @@ def build_dropdown_options(df_hash: str, field: str) -> list[str]:
 
 
 # ============================================================================
-# UI COMPONENTS (MANTIDOS COM PEQUENOS AJUSTES)
+# UI COMPONENTS
 # ============================================================================
 
 def render_css():
-    """CSS moderno com performance otimizada"""
+    """CSS moderno otimizado"""
     st.markdown("""
     <style>
     :root {
@@ -732,7 +717,6 @@ def render_css():
         box-shadow: 0 12px 24px rgba(2, 6, 23, .12);
     }
 
-    /* Loading animation */
     @keyframes pulse {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.5; }
@@ -751,7 +735,6 @@ def render_header(title: str):
 
     if os.path.exists(CFG.LOGO_PATH):
         try:
-            # Cache da logo em session_state
             if 'logo_b64' not in st.session_state:
                 with open(CFG.LOGO_PATH, "rb") as f:
                     st.session_state.logo_b64 = base64.b64encode(f.read()).decode()
@@ -799,7 +782,7 @@ def render_card_header(title: str, subtitle: str = ""):
 
 
 def render_member_preview(member: dict, total_found: int):
-    """Preview otimizado com tipografia melhorada"""
+    """Preview otimizado"""
     import html
 
     nome = html.escape(TextUtils.clean(member.get("nome_completo", "")) or "(Sem nome)")
@@ -853,12 +836,6 @@ def render_member_preview(member: dict, total_found: int):
             line-height: 1.5;
         }}
 
-        .info-row {{
-            margin-top: 16px;
-            padding-top: 14px;
-            border-top: 2px solid #E0F2FE;
-        }}
-
         .info-label {{
             font-size: 0.8rem;
             font-weight: 700;
@@ -900,7 +877,7 @@ def render_member_preview(member: dict, total_found: int):
 
 
 # ============================================================================
-# FORMULÁRIOS (COM DESTAQUE PARA CAMPOS VAZIOS)
+# FORMULÁRIO COM CAMPOS VAZIOS DESTACADOS VISUALMENTE
 # ============================================================================
 
 def render_member_form(
@@ -908,7 +885,7 @@ def render_member_form(
     initial_data: Optional[dict] = None,
     dropdown_opts: Optional[dict] = None
 ) -> Optional[dict]:
-    """Formulário com destaque visual para campos vazios"""
+    """Formulário com destaque visual ATRAENTE para campos vazios"""
 
     initial_data = initial_data or {}
     dropdown_opts = dropdown_opts or {}
@@ -929,6 +906,67 @@ def render_member_form(
         'batismo': TextUtils.is_empty(initial_data.get("data_batismo", "")),
         'congregacao': TextUtils.is_empty(initial_data.get("congregacao", "")),
     }
+
+    # CSS para campos vazios com animação
+    st.markdown("""
+    <style>
+    @keyframes gentle-pulse {
+        0%, 100% { 
+            box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.4);
+        }
+        50% { 
+            box-shadow: 0 0 0 8px rgba(251, 146, 60, 0);
+        }
+    }
+
+    .empty-field-alert {
+        background: linear-gradient(135deg, #FEF3C7 0%, #FED7AA 100%);
+        border: 2px solid #FB923C;
+        border-radius: 12px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        animation: gentle-pulse 2s infinite;
+        box-shadow: 0 4px 12px rgba(251, 146, 60, 0.15);
+    }
+
+    .empty-field-alert .icon {
+        font-size: 1.3rem;
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+    }
+
+    .empty-field-alert .text {
+        color: #C2410C;
+        font-weight: 700;
+        font-size: 0.95rem;
+        letter-spacing: -0.01em;
+    }
+
+    .recommended-field-alert {
+        background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+        border: 2px solid #3B82F6;
+        border-radius: 12px;
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+    }
+
+    .recommended-field-alert .icon {
+        font-size: 1.2rem;
+    }
+
+    .recommended-field-alert .text {
+        color: #1E40AF;
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     with st.form(f"{mode}_member_form", clear_on_submit=False):
         st.markdown("### 📋 Dados pessoais")
@@ -953,25 +991,37 @@ def render_member_form(
 
         with col2:
             if empty_fields['cpf']:
-                st.warning("⚠️ CPF não informado", icon="⚠️")
+                st.markdown("""
+                <div class="empty-field-alert">
+                    <div class="icon">⚠️</div>
+                    <div class="text">CPF não informado</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             cpf_input = st.text_input(
                 "CPF *",
                 value=Formatters.cpf(initial_data.get("cpf", "")),
                 placeholder="000.000.000-00",
                 key=f"{key_prefix}cpf",
                 max_chars=14,
-                help="Campo obrigatório" if empty_fields['cpf'] else None
+                help="Campo obrigatório - preencher" if empty_fields['cpf'] else None
             )
 
         if empty_fields['whatsapp']:
-            st.warning("⚠️ WhatsApp/Telefone não informado", icon="⚠️")
+            st.markdown("""
+            <div class="empty-field-alert">
+                <div class="icon">⚠️</div>
+                <div class="text">WhatsApp/Telefone não informado</div>
+            </div>
+            """, unsafe_allow_html=True)
+
         whats_input = st.text_input(
             "WhatsApp/Telefone *",
             value=Formatters.phone(initial_data.get("whatsapp_telefone", "")),
             placeholder="(88) 9.9999-9999",
             key=f"{key_prefix}whats",
             max_chars=15,
-            help="Campo obrigatório" if empty_fields['whatsapp'] else None
+            help="Campo obrigatório - preencher" if empty_fields['whatsapp'] else None
         )
 
         st.markdown("### 📍 Endereço")
@@ -980,23 +1030,35 @@ def render_member_form(
         bairro_idx = CFG.BAIRROS.index(bairro_current) if bairro_current in CFG.BAIRROS else 0
 
         if empty_fields['bairro']:
-            st.warning("⚠️ Bairro/Distrito não informado", icon="⚠️")
+            st.markdown("""
+            <div class="empty-field-alert">
+                <div class="icon">⚠️</div>
+                <div class="text">Bairro/Distrito não informado</div>
+            </div>
+            """, unsafe_allow_html=True)
+
         bairro = st.selectbox(
             "Bairro/Distrito *",
             options=CFG.BAIRROS,
             index=bairro_idx,
             key=f"{key_prefix}bairro",
-            help="Campo obrigatório" if empty_fields['bairro'] else None
+            help="Campo obrigatório - selecionar" if empty_fields['bairro'] else None
         )
 
         if empty_fields['endereco']:
-            st.warning("⚠️ Endereço não informado", icon="⚠️")
+            st.markdown("""
+            <div class="empty-field-alert">
+                <div class="icon">⚠️</div>
+                <div class="text">Endereço não informado</div>
+            </div>
+            """, unsafe_allow_html=True)
+
         endereco = st.text_input(
             "Endereço completo *",
             value=TextUtils.clean(initial_data.get("endereco", "")),
             key=f"{key_prefix}endereco",
             placeholder="Rua, número, complemento",
-            help="Campo obrigatório" if empty_fields['endereco'] else None
+            help="Campo obrigatório - preencher" if empty_fields['endereco'] else None
         )
 
         st.markdown("### 👨‍👩‍👧 Filiação")
@@ -1011,7 +1073,13 @@ def render_member_form(
 
         with col2:
             if empty_fields['pai']:
-                st.info("💡 Nome do pai recomendado", icon="💡")
+                st.markdown("""
+                <div class="recommended-field-alert">
+                    <div class="icon">💡</div>
+                    <div class="text">Nome do pai recomendado</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             pai = st.text_input(
                 "Nome do pai",
                 value=TextUtils.clean(initial_data.get("nome_pai", "")),
@@ -1024,7 +1092,13 @@ def render_member_form(
         col1, col2 = st.columns(2)
         with col1:
             if empty_fields['naturalidade']:
-                st.info("💡 Naturalidade recomendada", icon="💡")
+                st.markdown("""
+                <div class="recommended-field-alert">
+                    <div class="icon">💡</div>
+                    <div class="text">Naturalidade recomendada</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             naturalidade = st.text_input(
                 "Naturalidade",
                 value=TextUtils.clean(initial_data.get("naturalidade", "")),
@@ -1039,7 +1113,13 @@ def render_member_form(
             nac_idx = nac_opts.index(nac_current) if nac_current in nac_opts else 0
 
             if empty_fields['nacionalidade']:
-                st.info("💡 Nacionalidade recomendada", icon="💡")
+                st.markdown("""
+                <div class="recommended-field-alert">
+                    <div class="icon">💡</div>
+                    <div class="text">Nacionalidade recomendada</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             nacionalidade = st.selectbox(
                 "Nacionalidade",
                 options=nac_opts,
@@ -1053,19 +1133,31 @@ def render_member_form(
         ec_idx = ec_opts.index(ec_current) if ec_current in ec_opts else 0
 
         if empty_fields['estado_civil']:
-            st.warning("⚠️ Estado civil não informado", icon="⚠️")
+            st.markdown("""
+            <div class="empty-field-alert">
+                <div class="icon">⚠️</div>
+                <div class="text">Estado civil não informado</div>
+            </div>
+            """, unsafe_allow_html=True)
+
         estado_civil = st.selectbox(
             "Estado civil *",
             options=ec_opts,
             index=ec_idx,
             key=f"{key_prefix}ec",
-            help="Campo obrigatório" if empty_fields['estado_civil'] else None
+            help="Campo obrigatório - selecionar" if empty_fields['estado_civil'] else None
         )
 
         col1, col2 = st.columns(2)
         with col1:
             if empty_fields['batismo']:
-                st.info("💡 Data do batismo recomendada", icon="💡")
+                st.markdown("""
+                <div class="recommended-field-alert">
+                    <div class="icon">💡</div>
+                    <div class="text">Data do batismo recomendada</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             batismo = st.text_input(
                 "Data do batismo",
                 value=TextUtils.clean(initial_data.get("data_batismo", "")),
@@ -1080,16 +1172,58 @@ def render_member_form(
             cong_idx = cong_opts.index(cong_current) if cong_current in cong_opts else 0
 
             if empty_fields['congregacao']:
-                st.warning("⚠️ Congregação não informada", icon="⚠️")
+                st.markdown("""
+                <div class="empty-field-alert">
+                    <div class="icon">⚠️</div>
+                    <div class="text">Congregação não informada</div>
+                </div>
+                """, unsafe_allow_html=True)
+
             congregacao = st.selectbox(
                 "Congregação *",
                 options=cong_opts,
                 index=cong_idx,
                 key=f"{key_prefix}cong",
-                help="Campo obrigatório" if empty_fields['congregacao'] else None
+                help="Campo obrigatório - selecionar" if empty_fields['congregacao'] else None
             )
 
         st.divider()
+
+        # Resumo de campos pendentes
+        total_empty_required = sum([
+            empty_fields['cpf'], empty_fields['whatsapp'], 
+            empty_fields['endereco'], empty_fields['bairro'],
+            empty_fields['estado_civil'], empty_fields['congregacao']
+        ])
+
+        total_empty_recommended = sum([
+            empty_fields['pai'], empty_fields['naturalidade'],
+            empty_fields['nacionalidade'], empty_fields['batismo']
+        ])
+
+        if total_empty_required > 0 or total_empty_recommended > 0:
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                if total_empty_required > 0:
+                    st.markdown(f"""
+                    <div style="background:#FEF3C7;border-left:4px solid #FB923C;padding:10px;border-radius:8px;margin-bottom:10px;">
+                        <div style="font-weight:700;color:#C2410C;font-size:0.9rem;">
+                            ⚠️ {total_empty_required} campo(s) obrigatório(s) vazio(s)
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            with col_b:
+                if total_empty_recommended > 0:
+                    st.markdown(f"""
+                    <div style="background:#DBEAFE;border-left:4px solid #3B82F6;padding:10px;border-radius:8px;margin-bottom:10px;">
+                        <div style="font-weight:700;color:#1E40AF;font-size:0.9rem;">
+                            💡 {total_empty_recommended} campo(s) recomendado(s) vazio(s)
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
         st.caption("**Campos marcados com * são obrigatórios**")
 
         submit_label = "✓ Salvar novo cadastro" if mode == "new" else "✓ Salvar atualização"
@@ -1120,14 +1254,14 @@ def render_member_form(
 # ============================================================================
 
 def initialize_session():
-    """Inicializa estado da sessão com validações"""
+    """Inicializa estado da sessão"""
     defaults = {
         "searched": False,
         "match_ids": [],
         "search_dn": None,
         "search_mae": "",
-        "_cached_df": None,  # Cache adicional do DataFrame
-        "last_update": None,  # Timestamp da última atualização
+        "_cached_df": None,
+        "last_update": None,
     }
 
     for key, value in defaults.items():
@@ -1139,42 +1273,35 @@ def initialize_session():
 def main():
     """Aplicação principal otimizada"""
 
-    # Config página
     st.set_page_config(
         page_title=CFG.TITLE,
         page_icon=CFG.ICON,
         layout="centered",
-        initial_sidebar_state="collapsed"  # Performance
+        initial_sidebar_state="collapsed"
     )
 
-    # UI
     render_css()
     render_header(CFG.TITLE)
 
-    # Inicializa
     initialize_session()
 
-    # Conecta sheets
     sheets = SheetsService()
     worksheet = sheets.get_worksheet()
 
     if not worksheet:
         st.stop()
 
-    # Carrega dados com progress
     with st.spinner("🔄 Carregando base de dados..."):
         df = SheetsService.load_dataframe(worksheet)
-        st.session_state._cached_df = df  # Cache adicional
+        st.session_state._cached_df = df
 
     if df.empty:
         st.error("❌ Não foi possível carregar os dados")
         logger.error("DataFrame vazio")
         st.stop()
 
-    # Hash do DataFrame para cache de dropdowns
     df_hash = hashlib.md5(str(df.shape).encode()).hexdigest()
 
-    # Dropdown options com cache otimizado
     dropdown_opts = {
         "nacionalidade": build_dropdown_options(df_hash, "nacionalidade"),
         "estado_civil": build_dropdown_options(df_hash, "estado_civil"),
@@ -1295,7 +1422,6 @@ def main():
 
                     sleep(2)
 
-                    # Reset
                     st.session_state.searched = False
                     st.session_state.match_ids = []
                     st.session_state.search_dn = None
@@ -1377,19 +1503,10 @@ def main():
 
                 sleep(2)
 
-                # Reset
                 st.session_state.searched = False
                 st.session_state.match_ids = []
                 st.session_state.search_dn = None
                 st.session_state.search_mae = ""
                 st.session_state.last_update = datetime.now(CFG.TZ)
-                st.rerun()
+                st.re
 
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        logger.exception("Erro fatal na aplicação")
-        st.error(f"❌ Erro inesperado: {str(e)}")
-        st.error("Tente recarregar a página. Se o problema persistir, entre em contato.")
