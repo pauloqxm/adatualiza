@@ -601,22 +601,22 @@ def render_css():
     st.markdown("""
     <style>
     :root {
-        --primary: #059669;
-        --primary-dark: #047857;
+        --primary: #1D4ED8;
+        --primary-dark: #0B3AA8;
         --muted: #475569;
-        --border: #A7F3D0;
+        --border: #DBEAFE;
         --shadow: 0 10px 20px rgba(2, 6, 23, .08);
     }
 
     .main, .stApp {
-        background: linear-gradient(135deg, #ECFDF5 0%, #FFF 55%, #D1FAE5 100%);
+        background: linear-gradient(135deg, #EFF6FF 0%, #FFF 55%, #E0F2FE 100%);
     }
 
     .stTextInput > div > div > input,
     .stSelectbox > div > div > select,
     .stDateInput > div > div > input {
         border-radius: 12px !important;
-        border: 2px solid #A7F3D0 !important;
+        border: 2px solid #BFDBFE !important;
         padding: 12px !important;
         transition: all 0.2s ease !important;
     }
@@ -625,7 +625,7 @@ def render_css():
     .stSelectbox > div > div > select:focus,
     .stDateInput > div > div > input:focus {
         border-color: var(--primary) !important;
-        box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1) !important;
+        box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1) !important;
     }
 
     @keyframes glow-pulse {
@@ -651,17 +651,17 @@ def render_css():
         box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.25) !important;
     }
 
-    /* Campos recomendados vazios - VERDE */
+    /* Campos recomendados vazios - AZUL */
     [data-testid="stTextInput"][data-empty="recommended"] > div > div > input,
     [data-testid="stSelectbox"][data-empty="recommended"] > div > div > select {
-        border: 2px solid #6EE7B7 !important;
-        background: linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%) !important;
+        border: 2px solid #60A5FA !important;
+        background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%) !important;
     }
 
     [data-testid="stTextInput"][data-empty="recommended"] > div > div > input:focus,
     [data-testid="stSelectbox"][data-empty="recommended"] > div > div > select:focus {
-        border-color: #10B981 !important;
-        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2) !important;
+        border-color: #3B82F6 !important;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
     }
 
     div.stButton > button {
@@ -736,7 +736,7 @@ def render_header(title: str):
             logger.warning(f"Erro ao carregar logo: {e}")
 
     header_html = f"""
-    <div style="background:linear-gradient(135deg,#059669,#047857);
+    <div style="background:linear-gradient(135deg,#1D4ED8,#0B3AA8);
                 color:white;border-radius:18px;padding:16px 18px;
                 box-shadow:0 10px 20px rgba(2,6,23,.08);margin-bottom:18px;
                 display:flex;align-items:center;gap:12px;">
@@ -758,9 +758,9 @@ def render_card_header(title: str, subtitle: str = ""):
     subtitle_html = f'<div style="color:#475569;font-weight:650;">{subtitle}</div>' if subtitle else ''
 
     html = f"""
-    <div style="background:white;border:2px solid #A7F3D0;border-radius:18px;
+    <div style="background:white;border:2px solid #DBEAFE;border-radius:18px;
                 padding:18px;box-shadow:0 10px 20px rgba(2,6,23,.08);margin:14px 0;">
-        <div style="font-weight:900;color:#047857;font-size:1.15rem;margin-bottom:10px;">
+        <div style="font-weight:900;color:#0B3AA8;font-size:1.15rem;margin-bottom:10px;">
             {title}
         </div>
         {subtitle_html}
@@ -783,7 +783,7 @@ def render_member_preview(member: dict, total_found: int):
     <style>
         .card {{
             background: white;
-            border: 2px solid #A7F3D0;
+            border: 2px solid #DBEAFE;
             border-radius: 18px;
             padding: 18px;
             box-shadow: 0 10px 20px rgba(2, 6, 23, .08);
@@ -793,7 +793,7 @@ def render_member_preview(member: dict, total_found: int):
 
         .section {{
             font-weight: 800;
-            color: #047857;
+            color: #0B3AA8;
             font-size: 1.25rem;
             margin-bottom: 8px;
             letter-spacing: -0.02em;
@@ -810,7 +810,7 @@ def render_member_preview(member: dict, total_found: int):
         .found-name {{
             margin-top: 16px;
             font-weight: 800;
-            color: #047857;
+            color: #0B3AA8;
             font-size: 1.35rem;
             line-height: 1.3;
             letter-spacing: -0.02em;
@@ -836,7 +836,7 @@ def render_member_preview(member: dict, total_found: int):
         .info-value {{
             font-size: 1.1rem;
             font-weight: 700;
-            color: #047857;
+            color: #0B3AA8;
             line-height: 1.4;
             letter-spacing: -0.01em;
         }}
