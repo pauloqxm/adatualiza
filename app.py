@@ -637,6 +637,7 @@ def render_css():
         }
     }
 
+    /* Campos obrigatórios vazios - VERMELHO */
     [data-testid="stTextInput"][data-empty="required"] > div > div > input,
     [data-testid="stSelectbox"][data-empty="required"] > div > div > select {
         border: 2.5px solid #DC2626 !important;
@@ -650,6 +651,7 @@ def render_css():
         box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.25) !important;
     }
 
+    /* Campos recomendados vazios - VERDE */
     [data-testid="stTextInput"][data-empty="recommended"] > div > div > input,
     [data-testid="stSelectbox"][data-empty="recommended"] > div > div > select {
         border: 2px solid #6EE7B7 !important;
@@ -679,6 +681,45 @@ def render_css():
         box-shadow: 0 12px 24px rgba(2, 6, 23, .12);
     }
     </style>
+    
+    <script>
+    // Aplica estilos aos campos vazios após carregamento
+    function applyEmptyFieldStyles() {
+        // Campos de texto
+        document.querySelectorAll('[data-testid="stTextInput"]').forEach(function(el) {
+            var input = el.querySelector('input');
+            if (input && input.value === '') {
+                var label = el.querySelector('label');
+                if (label && label.textContent.includes('⚠️')) {
+                    el.setAttribute('data-empty', 'required');
+                } else if (label && label.textContent.includes('💡')) {
+                    el.setAttribute('data-empty', 'recommended');
+                }
+            }
+        });
+        
+        // Selectbox
+        document.querySelectorAll('[data-testid="stSelectbox"]').forEach(function(el) {
+            var label = el.querySelector('label');
+            if (label && label.textContent.includes('⚠️')) {
+                el.setAttribute('data-empty', 'required');
+            } else if (label && label.textContent.includes('💡')) {
+                el.setAttribute('data-empty', 'recommended');
+            }
+        });
+    }
+    
+    // Executa quando o DOM estiver pronto
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyEmptyFieldStyles);
+    } else {
+        applyEmptyFieldStyles();
+    }
+    
+    // Re-aplica após mudanças no Streamlit
+    setTimeout(applyEmptyFieldStyles, 500);
+    setInterval(applyEmptyFieldStyles, 2000);
+    </script>
     """, unsafe_allow_html=True)
 
 def render_header(title: str):
@@ -826,8 +867,12 @@ def mark_field_empty(field_type: str, status: Literal["required", "recommended"]
     """Helper para marcar campos vazios com CSS"""
     st.markdown(f"""
     <script>
-    var els = window.parent.document.querySelectorAll('[data-testid="{field_type}"]');
-    if (els.length > 0) els[els.length-1].setAttribute('data-empty', '{status}');
+    setTimeout(function() {{
+        var els = window.parent.document.querySelectorAll('[data-testid="{field_type}"]');
+        if (els.length > 0) {{
+            els[els.length-1].setAttribute('data-empty', '{status}');
+        }}
+    }}, 100);
     </script>
     """, unsafe_allow_html=True)
 
