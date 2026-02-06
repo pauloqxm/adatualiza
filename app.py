@@ -17,7 +17,6 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Lazy imports
 try:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -112,17 +111,24 @@ class Nacionalidade(str, Enum):
 @dataclass(frozen=True)
 class Config:
     TITLE: str = "Sistema de Cadastro - Assembleia de Deus"
-    VERSION: str = "3.0.0"
+    VERSION: str = "3.1.0"
     ICON: str = "⛪"
     LOGO_PATH: str = "data/logo_ad.jpg"
     TZ: ZoneInfo = field(default_factory=lambda: ZoneInfo("America/Fortaleza"))
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
     WORKSHEET_GID: int = 1191582738
     CACHE_TTL: int = 60
+    DROPDOWN_CACHE_TTL: int = 120
     MAX_RETRIES: int = 3
     RETRY_DELAY: float = 1.0
     RATE_LIMIT_CALLS: int = 10
     RATE_LIMIT_WINDOW: int = 60
+    CARD_HEIGHT_SIMPLE: int = 70
+    CARD_HEIGHT_WITH_SUBTITLE: int = 100
+    MEMBER_PREVIEW_HEIGHT: int = 280
+    MAX_INPUT_LENGTH: int = 200
+    MIN_NAME_TOKENS: int = 2
+    MIN_MOTHER_NAME_LENGTH: int = 2
 
     SCHEMA: tuple = (
         "membro_id", "cod_membro", "data_nasc", "nome_mae", "nome_completo",
@@ -202,10 +208,11 @@ class TextUtils:
         return len(TextUtils.clean(value)) == 0
 
     @staticmethod
-    def sanitize_input(value: str, max_length: int = 200) -> str:
+    def sanitize_input(value: str, max_length: int = None) -> str:
         if not value:
             return ""
-        sanitized = re.sub(r'[<>\"\'%;()&+]', '', str(value))
+        max_length = max_length or CFG.MAX_INPUT_LENGTH
+        sanitized = re.sub(r'[<>"\'%;()&+]', '', str(value))
         return sanitized[:max_length].strip()
 
 # ============================================================================
@@ -225,10 +232,10 @@ class Validators:
     def cpf(cpf_input: str) -> ValidationResult:
         digits = TextUtils.only_digits(cpf_input)
 
-        if len(digits) != 11:
+        if len(digits) != CFG.CPF_LENGTH:
             return ValidationResult(False, "CPF deve ter 11 dígitos")
 
-        if digits == digits[0] * 11:
+        if digits == digits[0] * CFG.CPF_LENGTH:
             return ValidationResult(False, "CPF com dígitos repetidos inválido")
 
         def calc_digit(base: str, weights: range) -> str:
@@ -249,7 +256,7 @@ class Validators:
     def phone(phone_input: str) -> ValidationResult:
         digits = TextUtils.only_digits(phone_input)
 
-        if len(digits) != 11:
+        if len(digits) != CFG.PHONE_LENGTH:
             return ValidationResult(False, "Telefone deve ter 11 dígitos (DDD + número)")
 
         ddd = int(digits[:2])
@@ -286,14 +293,14 @@ class Formatters:
     @staticmethod
     def cpf(cpf_input: str) -> str:
         digits = TextUtils.only_digits(cpf_input)
-        if len(digits) != 11:
+        if len(digits) != CFG.CPF_LENGTH:
             return cpf_input
         return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
 
     @staticmethod
     def phone(phone_input: str) -> str:
         digits = TextUtils.only_digits(phone_input)
-        if len(digits) != 11:
+        if len(digits) != CFG.PHONE_LENGTH:
             return phone_input
         return f"({digits[:2]}) {digits[2]}.{digits[3:7]}-{digits[7:]}"
 
@@ -386,16 +393,8 @@ class SheetsService:
     def _load_credentials() -> Optional[dict]:
         if "gcp_service_account" in st.secrets:
             return dict(st.secrets["gcp_service_account"])
-
-        if os.path.exists("service_account.json"):
-            with open("service_account.json", 'r') as f:
-                return json.load(f)
-
-        env_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        if env_path and os.path.exists(env_path):
-            with open(env_path, 'r') as f:
-                return json.load(f)
-
+        
+        logger.warning("Credenciais não encontradas em st.secrets")
         return None
 
     @retry_on_failure(max_attempts=CFG.MAX_RETRIES, delay=CFG.RETRY_DELAY)
@@ -511,7 +510,7 @@ class SheetsService:
 def find_members(df: pd.DataFrame, birth_date: date, mother_name: str) -> pd.DataFrame:
     mother_first = TextUtils.first_token(mother_name)
 
-    if not mother_first or len(mother_first) < 2:
+    if not mother_first or len(mother_first) < CFG.MIN_MOTHER_NAME_LENGTH:
         logger.warning("Nome da mãe muito curto")
         return df.iloc[0:0].copy()
 
@@ -552,7 +551,7 @@ def validate_member_data(data: dict) -> tuple[bool, list[str]]:
         errors.append(date_result.message)
 
     full_name = sanitized_data.get('nome_completo', '').strip()
-    if len(full_name.split()) < 2:
+    if len(full_name.split()) < CFG.MIN_NAME_TOKENS:
         errors.append("Nome completo deve ter nome e sobrenome")
 
     return (len(errors) == 0, errors)
@@ -570,7 +569,7 @@ def get_next_member_id(df: pd.DataFrame) -> int:
         return next_id
     return 1
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=CFG.DROPDOWN_CACHE_TTL)
 def build_dropdown_options(df_hash: str, field: str) -> list[str]:
     df = st.session_state.get('_cached_df')
     if df is None or df.empty or field not in df.columns:
@@ -613,7 +612,6 @@ def render_css():
         background: linear-gradient(135deg, #EFF6FF 0%, #FFF 55%, #E0F2FE 100%);
     }
 
-    /* Campos normais */
     .stTextInput > div > div > input,
     .stSelectbox > div > div > select,
     .stDateInput > div > div > input {
@@ -630,7 +628,6 @@ def render_css():
         box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.1) !important;
     }
 
-    /* Animação de pulso */
     @keyframes glow-pulse {
         0%, 100% { 
             box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.4);
@@ -640,7 +637,6 @@ def render_css():
         }
     }
 
-    /* Campos vazios OBRIGATÓRIOS - classe aplicada via data-testid */
     [data-testid="stTextInput"][data-empty="required"] > div > div > input,
     [data-testid="stSelectbox"][data-empty="required"] > div > div > select {
         border: 2.5px solid #FB923C !important;
@@ -654,7 +650,6 @@ def render_css():
         box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.25) !important;
     }
 
-    /* Campos vazios RECOMENDADOS */
     [data-testid="stTextInput"][data-empty="recommended"] > div > div > input,
     [data-testid="stSelectbox"][data-empty="recommended"] > div > div > select {
         border: 2px solid #60A5FA !important;
@@ -731,7 +726,7 @@ def render_card_header(title: str, subtitle: str = ""):
     </div>
     """
 
-    height = 100 if subtitle else 70
+    height = CFG.CARD_HEIGHT_WITH_SUBTITLE if subtitle else CFG.CARD_HEIGHT_SIMPLE
     components.html(html, height=height)
 
 def render_member_preview(member: dict, total_found: int):
@@ -825,27 +820,226 @@ def render_member_preview(member: dict, total_found: int):
     </div>
     """
 
-    components.html(html_content, height=280)
+    components.html(html_content, height=CFG.MEMBER_PREVIEW_HEIGHT)
+
+def mark_field_empty(field_type: str, status: Literal["required", "recommended"]):
+    """Helper para marcar campos vazios com CSS"""
+    st.markdown(f"""
+    <script>
+    var els = window.parent.document.querySelectorAll('[data-testid="{field_type}"]');
+    if (els.length > 0) els[els.length-1].setAttribute('data-empty', '{status}');
+    </script>
+    """, unsafe_allow_html=True)
 
 # ============================================================================
-# FORMULÁRIO COM DESTAQUE VISUAL INTEGRADO
+# FORMULÁRIO MODULARIZADO
 # ============================================================================
 
-def render_member_form(
-    mode: Literal["new", "edit"],
-    initial_data: Optional[dict] = None,
-    dropdown_opts: Optional[dict] = None
-) -> Optional[dict]:
-    """Formulário com campos vazios destacados visualmente"""
+def render_personal_data(prefix: str, initial: dict, empty_fields: dict) -> dict:
+    """Renderiza seção de dados pessoais"""
+    st.markdown("### 📋 Dados pessoais")
 
-    initial_data = initial_data or {}
-    dropdown_opts = dropdown_opts or {}
+    nome = st.text_input(
+        "Nome completo *",
+        value=TextUtils.clean(initial.get("nome_completo", "")),
+        key=f"{prefix}nome",
+        placeholder="Nome completo sem abreviações"
+    )
 
-    key_prefix = f"{mode}_"
-    birth_date = Formatters.parse_date(initial_data.get("data_nasc"))
+    col1, col2 = st.columns(2)
+    with col1:
+        birth_date = Formatters.parse_date(initial.get("data_nasc"))
+        data_nasc = st.date_input(
+            "Data de nascimento *",
+            value=birth_date,
+            min_value=CFG.MIN_BIRTH_DATE,
+            max_value=date.today(),
+            format="DD/MM/YYYY",
+            key=f"{prefix}dn"
+        )
 
-    # Verifica campos vazios
-    empty_fields = {
+    with col2:
+        cpf_label = "⚠️ CPF * (campo vazio)" if empty_fields.get('cpf') else "CPF *"
+        cpf_input = st.text_input(
+            cpf_label,
+            value=Formatters.cpf(initial.get("cpf", "")),
+            placeholder="000.000.000-00",
+            key=f"{prefix}cpf",
+            max_chars=14,
+            help="Campo obrigatório - preencher" if empty_fields.get('cpf') else None
+        )
+        if empty_fields.get('cpf'):
+            mark_field_empty("stTextInput", "required")
+
+    whats_label = "⚠️ WhatsApp/Telefone * (campo vazio)" if empty_fields.get('whatsapp') else "WhatsApp/Telefone *"
+    whats_input = st.text_input(
+        whats_label,
+        value=Formatters.phone(initial.get("whatsapp_telefone", "")),
+        placeholder="(88) 9.9999-9999",
+        key=f"{prefix}whats",
+        max_chars=15,
+        help="Campo obrigatório - preencher" if empty_fields.get('whatsapp') else None
+    )
+    if empty_fields.get('whatsapp'):
+        mark_field_empty("stTextInput", "required")
+
+    return {
+        "nome_completo": TextUtils.sanitize_input(nome),
+        "data_nasc": data_nasc,
+        "cpf": cpf_input,
+        "whatsapp_telefone": whats_input,
+    }
+
+def render_address(prefix: str, initial: dict, empty_fields: dict) -> dict:
+    """Renderiza seção de endereço"""
+    st.markdown("### 📍 Endereço")
+
+    bairro_current = TextUtils.clean(initial.get("bairro_distrito", ""))
+    bairro_idx = CFG.BAIRROS.index(bairro_current) if bairro_current in CFG.BAIRROS else 0
+
+    bairro_label = "⚠️ Bairro/Distrito * (campo vazio)" if empty_fields.get('bairro') else "Bairro/Distrito *"
+    bairro = st.selectbox(
+        bairro_label,
+        options=CFG.BAIRROS,
+        index=bairro_idx,
+        key=f"{prefix}bairro",
+        help="Campo obrigatório - selecionar" if empty_fields.get('bairro') else None
+    )
+    if empty_fields.get('bairro'):
+        mark_field_empty("stSelectbox", "required")
+
+    endereco_label = "⚠️ Endereço completo * (campo vazio)" if empty_fields.get('endereco') else "Endereço completo *"
+    endereco = st.text_input(
+        endereco_label,
+        value=TextUtils.clean(initial.get("endereco", "")),
+        key=f"{prefix}endereco",
+        placeholder="Rua, número, complemento",
+        help="Campo obrigatório - preencher" if empty_fields.get('endereco') else None
+    )
+    if empty_fields.get('endereco'):
+        mark_field_empty("stTextInput", "required")
+
+    return {
+        "bairro_distrito": bairro,
+        "endereco": TextUtils.sanitize_input(endereco),
+    }
+
+def render_family(prefix: str, initial: dict, empty_fields: dict) -> dict:
+    """Renderiza seção de filiação"""
+    st.markdown("### 👨👩👧 Filiação")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        mae = st.text_input(
+            "Nome da mãe *",
+            value=TextUtils.clean(initial.get("nome_mae", "")),
+            key=f"{prefix}mae"
+        )
+
+    with col2:
+        pai_label = "💡 Nome do pai (recomendado)" if empty_fields.get('pai') else "Nome do pai"
+        pai = st.text_input(
+            pai_label,
+            value=TextUtils.clean(initial.get("nome_pai", "")),
+            key=f"{prefix}pai",
+            help="Recomendado preencher" if empty_fields.get('pai') else None
+        )
+        if empty_fields.get('pai'):
+            mark_field_empty("stTextInput", "recommended")
+
+    return {
+        "nome_mae": TextUtils.sanitize_input(mae),
+        "nome_pai": TextUtils.sanitize_input(pai),
+    }
+
+def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdown_opts: dict) -> dict:
+    """Renderiza seção de dados complementares"""
+    st.markdown("### 📝 Dados complementares")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        nat_label = "💡 Naturalidade (recomendado)" if empty_fields.get('naturalidade') else "Naturalidade"
+        naturalidade = st.text_input(
+            nat_label,
+            value=TextUtils.clean(initial.get("naturalidade", "")),
+            key=f"{prefix}nat",
+            placeholder="Cidade de nascimento",
+            help="Recomendado preencher" if empty_fields.get('naturalidade') else None
+        )
+        if empty_fields.get('naturalidade'):
+            mark_field_empty("stTextInput", "recommended")
+
+    with col2:
+        nac_opts = dropdown_opts.get("nacionalidade", ["BRASILEIRA", "BRASILEIRO", "OUTRA"])
+        nac_current = TextUtils.clean(initial.get("nacionalidade", "")).upper()
+        nac_idx = nac_opts.index(nac_current) if nac_current in nac_opts else 0
+
+        nac_label = "💡 Nacionalidade (recomendado)" if empty_fields.get('nacionalidade') else "Nacionalidade"
+        nacionalidade = st.selectbox(
+            nac_label,
+            options=nac_opts,
+            index=nac_idx,
+            key=f"{prefix}nac",
+            help="Recomendado preencher" if empty_fields.get('nacionalidade') else None
+        )
+        if empty_fields.get('nacionalidade'):
+            mark_field_empty("stSelectbox", "recommended")
+
+    ec_opts = dropdown_opts.get("estado_civil", [e.value for e in EstadoCivil])
+    ec_current = TextUtils.clean(initial.get("estado_civil", "")).upper()
+    ec_idx = ec_opts.index(ec_current) if ec_current in ec_opts else 0
+
+    ec_label = "⚠️ Estado civil * (campo vazio)" if empty_fields.get('estado_civil') else "Estado civil *"
+    estado_civil = st.selectbox(
+        ec_label,
+        options=ec_opts,
+        index=ec_idx,
+        key=f"{prefix}ec",
+        help="Campo obrigatório - selecionar" if empty_fields.get('estado_civil') else None
+    )
+    if empty_fields.get('estado_civil'):
+        mark_field_empty("stSelectbox", "required")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        bat_label = "💡 Data do batismo (recomendado)" if empty_fields.get('batismo') else "Data do batismo"
+        batismo = st.text_input(
+            bat_label,
+            value=TextUtils.clean(initial.get("data_batismo", "")),
+            key=f"{prefix}bat",
+            placeholder="Ex.: 05/12/1992",
+            help="Recomendado preencher" if empty_fields.get('batismo') else None
+        )
+        if empty_fields.get('batismo'):
+            mark_field_empty("stTextInput", "recommended")
+
+    with col2:
+        cong_opts = dropdown_opts.get("congregacao", ["SEDE", "OUTRA"])
+        cong_current = TextUtils.clean(initial.get("congregacao", "")).upper()
+        cong_idx = cong_opts.index(cong_current) if cong_current in cong_opts else 0
+
+        cong_label = "⚠️ Congregação * (campo vazio)" if empty_fields.get('congregacao') else "Congregação *"
+        congregacao = st.selectbox(
+            cong_label,
+            options=cong_opts,
+            index=cong_idx,
+            key=f"{prefix}cong",
+            help="Campo obrigatório - selecionar" if empty_fields.get('congregacao') else None
+        )
+        if empty_fields.get('congregacao'):
+            mark_field_empty("stSelectbox", "required")
+
+    return {
+        "naturalidade": TextUtils.sanitize_input(naturalidade),
+        "nacionalidade": nacionalidade,
+        "estado_civil": estado_civil,
+        "data_batismo": TextUtils.sanitize_input(batismo),
+        "congregacao": congregacao,
+    }
+
+def calculate_empty_fields(initial_data: dict) -> dict:
+    """Calcula quais campos estão vazios"""
+    return {
         'cpf': TextUtils.is_empty(initial_data.get("cpf", "")),
         'whatsapp': TextUtils.is_empty(initial_data.get("whatsapp_telefone", "")),
         'endereco': TextUtils.is_empty(initial_data.get("endereco", "")),
@@ -858,272 +1052,60 @@ def render_member_form(
         'congregacao': TextUtils.is_empty(initial_data.get("congregacao", "")),
     }
 
+def render_form_summary(empty_fields: dict):
+    """Renderiza resumo de campos vazios"""
+    required_empty = sum([
+        empty_fields['cpf'], empty_fields['whatsapp'], 
+        empty_fields['endereco'], empty_fields['bairro'],
+        empty_fields['estado_civil'], empty_fields['congregacao']
+    ])
+
+    recommended_empty = sum([
+        empty_fields['pai'], empty_fields['naturalidade'],
+        empty_fields['nacionalidade'], empty_fields['batismo']
+    ])
+
+    if required_empty > 0 or recommended_empty > 0:
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            if required_empty > 0:
+                st.warning(f"{required_empty} campo(s) obrigatório(s) vazio(s)", icon="⚠️")
+
+        with col_b:
+            if recommended_empty > 0:
+                st.info(f"{recommended_empty} campo(s) recomendado(s) vazio(s)", icon="💡")
+
+def render_member_form(
+    mode: Literal["new", "edit"],
+    initial_data: Optional[dict] = None,
+    dropdown_opts: Optional[dict] = None
+) -> Optional[dict]:
+    """Formulário modularizado com campos vazios destacados"""
+
+    initial_data = initial_data or {}
+    dropdown_opts = dropdown_opts or {}
+    key_prefix = f"{mode}_"
+
+    empty_fields = calculate_empty_fields(initial_data)
+
     with st.form(f"{mode}_member_form", clear_on_submit=False):
-        st.markdown("### 📋 Dados pessoais")
-
-        nome = st.text_input(
-            "Nome completo *",
-            value=TextUtils.clean(initial_data.get("nome_completo", "")),
-            key=f"{key_prefix}nome",
-            placeholder="Nome completo sem abreviações"
-        )
-
-        col1, col2 = st.columns(2)
-        with col1:
-            data_nasc = st.date_input(
-                "Data de nascimento *",
-                value=birth_date,
-                min_value=CFG.MIN_BIRTH_DATE,
-                max_value=date.today(),
-                format="DD/MM/YYYY",
-                key=f"{key_prefix}dn"
-            )
-
-        with col2:
-            cpf_label = "⚠️ CPF * (campo vazio)" if empty_fields['cpf'] else "CPF *"
-            cpf_input = st.text_input(
-                cpf_label,
-                value=Formatters.cpf(initial_data.get("cpf", "")),
-                placeholder="000.000.000-00",
-                key=f"{key_prefix}cpf",
-                max_chars=14,
-                help="Campo obrigatório - preencher" if empty_fields['cpf'] else None
-            )
-            # Aplica classe CSS via JavaScript
-            if empty_fields['cpf']:
-                st.markdown("""
-                <script>
-                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
-                inputs[inputs.length-1].setAttribute('data-empty', 'required');
-                </script>
-                """, unsafe_allow_html=True)
-
-        whats_label = "⚠️ WhatsApp/Telefone * (campo vazio)" if empty_fields['whatsapp'] else "WhatsApp/Telefone *"
-        whats_input = st.text_input(
-            whats_label,
-            value=Formatters.phone(initial_data.get("whatsapp_telefone", "")),
-            placeholder="(88) 9.9999-9999",
-            key=f"{key_prefix}whats",
-            max_chars=15,
-            help="Campo obrigatório - preencher" if empty_fields['whatsapp'] else None
-        )
-        if empty_fields['whatsapp']:
-            st.markdown("""
-            <script>
-            var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
-            inputs[inputs.length-1].setAttribute('data-empty', 'required');
-            </script>
-            """, unsafe_allow_html=True)
-
-        st.markdown("### 📍 Endereço")
-
-        bairro_current = TextUtils.clean(initial_data.get("bairro_distrito", ""))
-        bairro_idx = CFG.BAIRROS.index(bairro_current) if bairro_current in CFG.BAIRROS else 0
-
-        bairro_label = "⚠️ Bairro/Distrito * (campo vazio)" if empty_fields['bairro'] else "Bairro/Distrito *"
-        bairro = st.selectbox(
-            bairro_label,
-            options=CFG.BAIRROS,
-            index=bairro_idx,
-            key=f"{key_prefix}bairro",
-            help="Campo obrigatório - selecionar" if empty_fields['bairro'] else None
-        )
-        if empty_fields['bairro']:
-            st.markdown("""
-            <script>
-            var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
-            selects[selects.length-1].setAttribute('data-empty', 'required');
-            </script>
-            """, unsafe_allow_html=True)
-
-        endereco_label = "⚠️ Endereço completo * (campo vazio)" if empty_fields['endereco'] else "Endereço completo *"
-        endereco = st.text_input(
-            endereco_label,
-            value=TextUtils.clean(initial_data.get("endereco", "")),
-            key=f"{key_prefix}endereco",
-            placeholder="Rua, número, complemento",
-            help="Campo obrigatório - preencher" if empty_fields['endereco'] else None
-        )
-        if empty_fields['endereco']:
-            st.markdown("""
-            <script>
-            var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
-            inputs[inputs.length-1].setAttribute('data-empty', 'required');
-            </script>
-            """, unsafe_allow_html=True)
-
-        st.markdown("### 👨‍👩‍👧 Filiação")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            mae = st.text_input(
-                "Nome da mãe *",
-                value=TextUtils.clean(initial_data.get("nome_mae", "")),
-                key=f"{key_prefix}mae"
-            )
-
-        with col2:
-            pai_label = "💡 Nome do pai (recomendado)" if empty_fields['pai'] else "Nome do pai"
-            pai = st.text_input(
-                pai_label,
-                value=TextUtils.clean(initial_data.get("nome_pai", "")),
-                key=f"{key_prefix}pai",
-                help="Recomendado preencher" if empty_fields['pai'] else None
-            )
-            if empty_fields['pai']:
-                st.markdown("""
-                <script>
-                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
-                inputs[inputs.length-1].setAttribute('data-empty', 'recommended');
-                </script>
-                """, unsafe_allow_html=True)
-
-        st.markdown("### 📝 Dados complementares")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            nat_label = "💡 Naturalidade (recomendado)" if empty_fields['naturalidade'] else "Naturalidade"
-            naturalidade = st.text_input(
-                nat_label,
-                value=TextUtils.clean(initial_data.get("naturalidade", "")),
-                key=f"{key_prefix}nat",
-                placeholder="Cidade de nascimento",
-                help="Recomendado preencher" if empty_fields['naturalidade'] else None
-            )
-            if empty_fields['naturalidade']:
-                st.markdown("""
-                <script>
-                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
-                inputs[inputs.length-1].setAttribute('data-empty', 'recommended');
-                </script>
-                """, unsafe_allow_html=True)
-
-        with col2:
-            nac_opts = dropdown_opts.get("nacionalidade", ["BRASILEIRA", "BRASILEIRO", "OUTRA"])
-            nac_current = TextUtils.clean(initial_data.get("nacionalidade", "")).upper()
-            nac_idx = nac_opts.index(nac_current) if nac_current in nac_opts else 0
-
-            nac_label = "💡 Nacionalidade (recomendado)" if empty_fields['nacionalidade'] else "Nacionalidade"
-            nacionalidade = st.selectbox(
-                nac_label,
-                options=nac_opts,
-                index=nac_idx,
-                key=f"{key_prefix}nac",
-                help="Recomendado preencher" if empty_fields['nacionalidade'] else None
-            )
-            if empty_fields['nacionalidade']:
-                st.markdown("""
-                <script>
-                var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
-                selects[selects.length-1].setAttribute('data-empty', 'recommended');
-                </script>
-                """, unsafe_allow_html=True)
-
-        ec_opts = dropdown_opts.get("estado_civil", [e.value for e in EstadoCivil])
-        ec_current = TextUtils.clean(initial_data.get("estado_civil", "")).upper()
-        ec_idx = ec_opts.index(ec_current) if ec_current in ec_opts else 0
-
-        ec_label = "⚠️ Estado civil * (campo vazio)" if empty_fields['estado_civil'] else "Estado civil *"
-        estado_civil = st.selectbox(
-            ec_label,
-            options=ec_opts,
-            index=ec_idx,
-            key=f"{key_prefix}ec",
-            help="Campo obrigatório - selecionar" if empty_fields['estado_civil'] else None
-        )
-        if empty_fields['estado_civil']:
-            st.markdown("""
-            <script>
-            var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
-            selects[selects.length-1].setAttribute('data-empty', 'required');
-            </script>
-            """, unsafe_allow_html=True)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            bat_label = "💡 Data do batismo (recomendado)" if empty_fields['batismo'] else "Data do batismo"
-            batismo = st.text_input(
-                bat_label,
-                value=TextUtils.clean(initial_data.get("data_batismo", "")),
-                key=f"{key_prefix}bat",
-                placeholder="Ex.: 05/12/1992",
-                help="Recomendado preencher" if empty_fields['batismo'] else None
-            )
-            if empty_fields['batismo']:
-                st.markdown("""
-                <script>
-                var inputs = window.parent.document.querySelectorAll('[data-testid="stTextInput"]');
-                inputs[inputs.length-1].setAttribute('data-empty', 'recommended');
-                </script>
-                """, unsafe_allow_html=True)
-
-        with col2:
-            cong_opts = dropdown_opts.get("congregacao", ["SEDE", "OUTRA"])
-            cong_current = TextUtils.clean(initial_data.get("congregacao", "")).upper()
-            cong_idx = cong_opts.index(cong_current) if cong_current in cong_opts else 0
-
-            cong_label = "⚠️ Congregação * (campo vazio)" if empty_fields['congregacao'] else "Congregação *"
-            congregacao = st.selectbox(
-                cong_label,
-                options=cong_opts,
-                index=cong_idx,
-                key=f"{key_prefix}cong",
-                help="Campo obrigatório - selecionar" if empty_fields['congregacao'] else None
-            )
-            if empty_fields['congregacao']:
-                st.markdown("""
-                <script>
-                var selects = window.parent.document.querySelectorAll('[data-testid="stSelectbox"]');
-                selects[selects.length-1].setAttribute('data-empty', 'required');
-                </script>
-                """, unsafe_allow_html=True)
+        form_data = {}
+        
+        form_data.update(render_personal_data(key_prefix, initial_data, empty_fields))
+        form_data.update(render_address(key_prefix, initial_data, empty_fields))
+        form_data.update(render_family(key_prefix, initial_data, empty_fields))
+        form_data.update(render_complementary(key_prefix, initial_data, empty_fields, dropdown_opts))
 
         st.divider()
-
-        # Resumo compacto
-        total_empty_required = sum([
-            empty_fields['cpf'], empty_fields['whatsapp'], 
-            empty_fields['endereco'], empty_fields['bairro'],
-            empty_fields['estado_civil'], empty_fields['congregacao']
-        ])
-
-        total_empty_recommended = sum([
-            empty_fields['pai'], empty_fields['naturalidade'],
-            empty_fields['nacionalidade'], empty_fields['batismo']
-        ])
-
-        if total_empty_required > 0 or total_empty_recommended > 0:
-            col_a, col_b = st.columns(2)
-
-            with col_a:
-                if total_empty_required > 0:
-                    st.warning(f"{total_empty_required} campo(s) obrigatório(s) vazio(s)", icon="⚠️")
-
-            with col_b:
-                if total_empty_recommended > 0:
-                    st.info(f"{total_empty_recommended} campo(s) recomendado(s) vazio(s)", icon="💡")
-
+        render_form_summary(empty_fields)
         st.caption("**Campos marcados com * são obrigatórios**")
 
         submit_label = "✓ Salvar novo cadastro" if mode == "new" else "✓ Salvar atualização"
         submitted = st.form_submit_button(submit_label, use_container_width=True)
 
         if submitted:
-            return {
-                "nome_completo": TextUtils.sanitize_input(nome),
-                "data_nasc": data_nasc,
-                "cpf": cpf_input,
-                "whatsapp_telefone": whats_input,
-                "bairro_distrito": bairro,
-                "endereco": TextUtils.sanitize_input(endereco),
-                "nome_mae": TextUtils.sanitize_input(mae),
-                "nome_pai": TextUtils.sanitize_input(pai),
-                "nacionalidade": nacionalidade,
-                "naturalidade": TextUtils.sanitize_input(naturalidade),
-                "estado_civil": estado_civil,
-                "data_batismo": TextUtils.sanitize_input(batismo),
-                "congregacao": congregacao,
-            }
+            return form_data
 
         return None
 
@@ -1144,6 +1126,134 @@ def initialize_session():
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+def handle_new_member(worksheet, df: pd.DataFrame, form_data: dict, dropdown_opts: dict):
+    """Processa novo cadastro"""
+    render_card_header(
+        "➕ Novo cadastro",
+        "Não encontramos seu registro. Preencha os dados abaixo."
+    )
+
+    submitted_data = render_member_form(
+        mode="new",
+        initial_data={
+            "data_nasc": st.session_state.search_dn,
+            "nome_mae": st.session_state.search_mae,
+        },
+        dropdown_opts=dropdown_opts
+    )
+
+    if not submitted_data:
+        return
+
+    is_valid, errors = validate_member_data(submitted_data)
+
+    if not is_valid:
+        for err in errors:
+            st.error(f"❌ {err}")
+        return
+
+    now_str = datetime.now(CFG.TZ).strftime(CFG.DATETIME_FORMAT)
+    new_id = get_next_member_id(df)
+
+    payload = {
+        "membro_id": str(new_id),
+        "cod_membro": "",
+        "data_nasc": Formatters.date_br(submitted_data["data_nasc"]),
+        "nome_mae": submitted_data["nome_mae"],
+        "nome_completo": submitted_data["nome_completo"],
+        "cpf": Formatters.cpf(submitted_data["cpf"]),
+        "whatsapp_telefone": Formatters.phone(submitted_data["whatsapp_telefone"]),
+        "bairro_distrito": submitted_data["bairro_distrito"],
+        "endereco": submitted_data["endereco"],
+        "nome_pai": submitted_data["nome_pai"],
+        "nacionalidade": submitted_data["nacionalidade"],
+        "naturalidade": submitted_data["naturalidade"],
+        "estado_civil": submitted_data["estado_civil"],
+        "data_batismo": submitted_data["data_batismo"],
+        "congregacao": submitted_data["congregacao"],
+        "atualizado": now_str,
+    }
+
+    with st.spinner("💾 Salvando..."):
+        if SheetsService.append_row(worksheet, payload):
+            st.success(f"✅ Cadastro salvo! ID: {new_id}")
+            st.balloons()
+            st.info("🔄 Recarregue a página para fazer nova busca")
+            st.session_state.searched = False
+            st.session_state.match_ids = []
+
+def handle_existing_member(worksheet, df: pd.DataFrame, matches_df: pd.DataFrame, dropdown_opts: dict):
+    """Processa atualização de cadastro existente"""
+    total_found = len(matches_df)
+
+    if total_found > 1:
+        matches_df = matches_df.sort_values("nome_completo")
+
+        options = []
+        for idx, row in matches_df.iterrows():
+            nome = TextUtils.clean(row.get("nome_completo", "")) or "(Sem nome)"
+            cong = TextUtils.clean(row.get("congregacao", ""))
+            label = f"{nome} | {cong}" if cong else nome
+            options.append((idx, label))
+
+        selected = st.selectbox(
+            "Selecione o membro",
+            options=options,
+            format_func=lambda x: x[1],
+            help="Múltiplos registros encontrados"
+        )
+        selected_idx = selected[0]
+    else:
+        selected_idx = matches_df.index[0]
+
+    row_data = df.loc[selected_idx].to_dict()
+    render_member_preview(row_data, total_found)
+
+    sheet_row = int(row_data["_sheet_row"])
+
+    submitted_data = render_member_form(
+        mode="edit",
+        initial_data=row_data,
+        dropdown_opts=dropdown_opts
+    )
+
+    if not submitted_data:
+        return
+
+    is_valid, errors = validate_member_data(submitted_data)
+
+    if not is_valid:
+        for err in errors:
+            st.error(f"❌ {err}")
+        return
+
+    now_str = datetime.now(CFG.TZ).strftime(CFG.DATETIME_FORMAT)
+
+    payload = {
+        "nome_completo": submitted_data["nome_completo"],
+        "data_nasc": Formatters.date_br(submitted_data["data_nasc"]),
+        "cpf": Formatters.cpf(submitted_data["cpf"]),
+        "whatsapp_telefone": Formatters.phone(submitted_data["whatsapp_telefone"]),
+        "bairro_distrito": submitted_data["bairro_distrito"],
+        "endereco": submitted_data["endereco"],
+        "nome_mae": submitted_data["nome_mae"],
+        "nome_pai": submitted_data["nome_pai"],
+        "nacionalidade": submitted_data["nacionalidade"],
+        "naturalidade": submitted_data["naturalidade"],
+        "estado_civil": submitted_data["estado_civil"],
+        "data_batismo": submitted_data["data_batismo"],
+        "congregacao": submitted_data["congregacao"],
+        "atualizado": now_str,
+    }
+
+    with st.spinner("💾 Salvando alterações..."):
+        if SheetsService.update_row(worksheet, sheet_row, payload):
+            st.success("✅ Cadastro atualizado com sucesso!")
+            st.balloons()
+            st.info("🔄 Recarregue a página para fazer nova busca")
+            st.session_state.searched = False
+            st.session_state.match_ids = []
 
 @measure_time
 def main():
@@ -1210,7 +1320,7 @@ def main():
             st.warning("⚠️ Escolha a data de nascimento")
             return False
 
-        if not input_mother.strip() or len(input_mother.strip()) < 2:
+        if not input_mother.strip() or len(input_mother.strip()) < CFG.MIN_MOTHER_NAME_LENGTH:
             st.warning("⚠️ Digite pelo menos 2 letras do nome da mãe")
             return False
 
@@ -1225,8 +1335,7 @@ def main():
         return True
 
     if st.button("🔍 Buscar cadastro", use_container_width=True):
-        if perform_search():
-            st.rerun()
+        perform_search()
 
     if not st.session_state.searched:
         st.stop()
@@ -1236,140 +1345,10 @@ def main():
     match_ids = st.session_state.match_ids
 
     if len(match_ids) == 0:
-        render_card_header(
-            "➕ Novo cadastro",
-            "Não encontramos seu registro. Preencha os dados abaixo."
-        )
-
-        form_data = render_member_form(
-            mode="new",
-            initial_data={
-                "data_nasc": st.session_state.search_dn,
-                "nome_mae": st.session_state.search_mae,
-            },
-            dropdown_opts=dropdown_opts
-        )
-
-        if form_data:
-            is_valid, errors = validate_member_data(form_data)
-
-            if not is_valid:
-                for err in errors:
-                    st.error(f"❌ {err}")
-                st.stop()
-
-            now_str = datetime.now(CFG.TZ).strftime(CFG.DATETIME_FORMAT)
-            new_id = get_next_member_id(df)
-
-            payload = {
-                "membro_id": str(new_id),
-                "cod_membro": "",
-                "data_nasc": Formatters.date_br(form_data["data_nasc"]),
-                "nome_mae": form_data["nome_mae"],
-                "nome_completo": form_data["nome_completo"],
-                "cpf": Formatters.cpf(form_data["cpf"]),
-                "whatsapp_telefone": Formatters.phone(form_data["whatsapp_telefone"]),
-                "bairro_distrito": form_data["bairro_distrito"],
-                "endereco": form_data["endereco"],
-                "nome_pai": form_data["nome_pai"],
-                "nacionalidade": form_data["nacionalidade"],
-                "naturalidade": form_data["naturalidade"],
-                "estado_civil": form_data["estado_civil"],
-                "data_batismo": form_data["data_batismo"],
-                "congregacao": form_data["congregacao"],
-                "atualizado": now_str,
-            }
-
-            with st.spinner("💾 Salvando..."):
-                if SheetsService.append_row(worksheet, payload):
-                    st.success(f"✅ Cadastro salvo! ID: {new_id}")
-                    st.balloons()
-
-                    sleep(2)
-
-                    st.session_state.searched = False
-                    st.session_state.match_ids = []
-                    st.session_state.search_dn = None
-                    st.session_state.search_mae = ""
-                    st.session_state.last_update = datetime.now(CFG.TZ)
-                    st.rerun()
-
-        st.stop()
-
-    matches_df = df.loc[match_ids].copy()
-    total_found = len(matches_df)
-
-    if total_found > 1:
-        matches_df = matches_df.sort_values("nome_completo")
-
-        options = []
-        for idx, row in matches_df.iterrows():
-            nome = TextUtils.clean(row.get("nome_completo", "")) or "(Sem nome)"
-            cong = TextUtils.clean(row.get("congregacao", ""))
-            label = f"{nome} | {cong}" if cong else nome
-            options.append((idx, label))
-
-        selected = st.selectbox(
-            "Selecione o membro",
-            options=options,
-            format_func=lambda x: x[1],
-            help="Múltiplos registros encontrados"
-        )
-        selected_idx = selected[0]
+        handle_new_member(worksheet, df, None, dropdown_opts)
     else:
-        selected_idx = matches_df.index[0]
-
-    row_data = df.loc[selected_idx].to_dict()
-    render_member_preview(row_data, total_found)
-
-    sheet_row = int(row_data["_sheet_row"])
-
-    form_data = render_member_form(
-        mode="edit",
-        initial_data=row_data,
-        dropdown_opts=dropdown_opts
-    )
-
-    if form_data:
-        is_valid, errors = validate_member_data(form_data)
-
-        if not is_valid:
-            for err in errors:
-                st.error(f"❌ {err}")
-            st.stop()
-
-        now_str = datetime.now(CFG.TZ).strftime(CFG.DATETIME_FORMAT)
-
-        payload = {
-            "nome_completo": form_data["nome_completo"],
-            "data_nasc": Formatters.date_br(form_data["data_nasc"]),
-            "cpf": Formatters.cpf(form_data["cpf"]),
-            "whatsapp_telefone": Formatters.phone(form_data["whatsapp_telefone"]),
-            "bairro_distrito": form_data["bairro_distrito"],
-            "endereco": form_data["endereco"],
-            "nome_mae": form_data["nome_mae"],
-            "nome_pai": form_data["nome_pai"],
-            "nacionalidade": form_data["nacionalidade"],
-            "naturalidade": form_data["naturalidade"],
-            "estado_civil": form_data["estado_civil"],
-            "data_batismo": form_data["data_batismo"],
-            "congregacao": form_data["congregacao"],
-            "atualizado": now_str,
-        }
-
-        with st.spinner("💾 Salvando alterações..."):
-            if SheetsService.update_row(worksheet, sheet_row, payload):
-                st.success("✅ Cadastro atualizado com sucesso!")
-                st.balloons()
-
-                sleep(2)
-
-                st.session_state.searched = False
-                st.session_state.match_ids = []
-                st.session_state.search_dn = None
-                st.session_state.search_mae = ""
-                st.session_state.last_update = datetime.now(CFG.TZ)
-                st.rerun()
+        matches_df = df.loc[match_ids].copy()
+        handle_existing_member(worksheet, df, matches_df, dropdown_opts)
 
 
 if __name__ == "__main__":
