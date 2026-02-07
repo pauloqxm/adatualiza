@@ -948,36 +948,40 @@ def render_personal_data(prefix: str, initial: dict, empty_fields: dict) -> dict
 
     with col2:
         cpf_label = "⚠️ CPF * (campo vazio)" if empty_fields.get('cpf') else "CPF *"
-        cpf_raw = st.text_input(
+        cpf_value = Formatters.cpf(initial.get("cpf", ""))
+        cpf_input = st.text_input(
             cpf_label,
-            value=Formatters.cpf(initial.get("cpf", "")),
+            value=cpf_value,
             placeholder="000.000.000-00",
             key=f"{prefix}cpf",
             max_chars=14,
             help="Campo obrigatório - preencher" if empty_fields.get('cpf') else None
         )
-        cpf_input = Formatters.format_cpf_input(cpf_raw)
         if empty_fields.get('cpf'):
             mark_field_empty("stTextInput", "required")
 
     whats_label = "⚠️ WhatsApp/Telefone * (campo vazio)" if empty_fields.get('whatsapp') else "WhatsApp/Telefone *"
-    whats_raw = st.text_input(
+    whats_value = Formatters.phone(initial.get("whatsapp_telefone", ""))
+    whats_input = st.text_input(
         whats_label,
-        value=Formatters.phone(initial.get("whatsapp_telefone", "")),
+        value=whats_value,
         placeholder="(88) 9.9999-9999",
         key=f"{prefix}whats",
         max_chars=16,
         help="Campo obrigatório - preencher" if empty_fields.get('whatsapp') else None
     )
-    whats_input = Formatters.format_phone_input(whats_raw)
     if empty_fields.get('whatsapp'):
         mark_field_empty("stTextInput", "required")
+
+    # Aplica formatação aos valores digitados
+    cpf_formatted = Formatters.format_cpf_input(cpf_input)
+    whats_formatted = Formatters.format_phone_input(whats_input)
 
     return {
         "nome_completo": TextUtils.sanitize_input(nome),
         "data_nasc": data_nasc,
-        "cpf": cpf_input,
-        "whatsapp_telefone": whats_input,
+        "cpf": cpf_formatted,
+        "whatsapp_telefone": whats_formatted,
     }
 
 def render_address(prefix: str, initial: dict, empty_fields: dict) -> dict:
@@ -1055,33 +1059,36 @@ def render_ministerial_data(prefix: str, initial: dict) -> dict:
 
     col1, col2 = st.columns(2)
     with col1:
-        consag_auxiliar_raw = st.text_input(
+        consag_auxiliar_value = TextUtils.clean(initial.get("data_consag_auxiliar", ""))
+        consag_auxiliar_input = st.text_input(
             "Data consagração auxiliar",
-            value=TextUtils.clean(initial.get("data_consag_auxiliar", "")),
+            value=consag_auxiliar_value,
             key=f"{prefix}consag_aux",
             placeholder="Ex.: 15/08/2010",
             max_chars=10
         )
-        consag_auxiliar = Formatters.format_date_input(consag_auxiliar_raw)
+        consag_auxiliar = Formatters.format_date_input(consag_auxiliar_input)
 
     with col2:
-        consag_diacono_raw = st.text_input(
+        consag_diacono_value = TextUtils.clean(initial.get("data_consag_diacono", ""))
+        consag_diacono_input = st.text_input(
             "Data consagração diácono",
-            value=TextUtils.clean(initial.get("data_consag_diacono", "")),
+            value=consag_diacono_value,
             key=f"{prefix}consag_diac",
             placeholder="Ex.: 20/05/2015",
             max_chars=10
         )
-        consag_diacono = Formatters.format_date_input(consag_diacono_raw)
+        consag_diacono = Formatters.format_date_input(consag_diacono_input)
 
-    consag_presbitero_raw = st.text_input(
+    consag_presbitero_value = TextUtils.clean(initial.get("data_consag_presbitero", ""))
+    consag_presbitero_input = st.text_input(
         "Data consagração presbítero",
-        value=TextUtils.clean(initial.get("data_consag_presbitero", "")),
+        value=consag_presbitero_value,
         key=f"{prefix}consag_presb",
         placeholder="Ex.: 10/12/2020",
         max_chars=10
     )
-    consag_presbitero = Formatters.format_date_input(consag_presbitero_raw)
+    consag_presbitero = Formatters.format_date_input(consag_presbitero_input)
 
     return {
         "cargo": TextUtils.sanitize_input(cargo),
@@ -1141,15 +1148,16 @@ def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdow
     col1, col2 = st.columns(2)
     with col1:
         bat_label = "💡 Data do batismo (recomendado)" if empty_fields.get('batismo') else "Data do batismo"
-        batismo_raw = st.text_input(
+        batismo_value = TextUtils.clean(initial.get("data_batismo", ""))
+        batismo_input = st.text_input(
             bat_label,
-            value=TextUtils.clean(initial.get("data_batismo", "")),
+            value=batismo_value,
             key=f"{prefix}bat",
             placeholder="Ex.: 05/12/1992",
             max_chars=10,
             help="Recomendado preencher" if empty_fields.get('batismo') else None
         )
-        batismo = Formatters.format_date_input(batismo_raw)
+        batismo = Formatters.format_date_input(batismo_input)
         if empty_fields.get('batismo'):
             mark_field_empty("stTextInput", "recommended")
 
