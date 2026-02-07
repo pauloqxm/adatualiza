@@ -306,6 +306,34 @@ class Formatters:
         return f"{digits[:2]}/{digits[2:4]}/{digits[4:8]}"
 
     @staticmethod
+    def format_cpf_input(value: str) -> str:
+        """Formata automaticamente CPF com pontos e traço"""
+        digits = TextUtils.only_digits(value)
+        if len(digits) == 0:
+            return ""
+        if len(digits) <= 3:
+            return digits
+        if len(digits) <= 6:
+            return f"{digits[:3]}.{digits[3:]}"
+        if len(digits) <= 9:
+            return f"{digits[:3]}.{digits[3:6]}.{digits[6:]}"
+        return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:11]}"
+
+    @staticmethod
+    def format_phone_input(value: str) -> str:
+        """Formata automaticamente telefone (88) 9.9999-9999"""
+        digits = TextUtils.only_digits(value)
+        if len(digits) == 0:
+            return ""
+        if len(digits) <= 2:
+            return f"({digits}"
+        if len(digits) <= 3:
+            return f"({digits[:2]}) {digits[2:]}"
+        if len(digits) <= 7:
+            return f"({digits[:2]}) {digits[2]}.{digits[3:]}"
+        return f"({digits[:2]}) {digits[2]}.{digits[3:7]}-{digits[7:11]}"
+
+    @staticmethod
     def cpf(cpf_input: str) -> str:
         digits = TextUtils.only_digits(cpf_input)
         if len(digits) != CFG.CPF_LENGTH:
@@ -920,7 +948,7 @@ def render_personal_data(prefix: str, initial: dict, empty_fields: dict) -> dict
 
     with col2:
         cpf_label = "⚠️ CPF * (campo vazio)" if empty_fields.get('cpf') else "CPF *"
-        cpf_input = st.text_input(
+        cpf_raw = st.text_input(
             cpf_label,
             value=Formatters.cpf(initial.get("cpf", "")),
             placeholder="000.000.000-00",
@@ -928,18 +956,20 @@ def render_personal_data(prefix: str, initial: dict, empty_fields: dict) -> dict
             max_chars=14,
             help="Campo obrigatório - preencher" if empty_fields.get('cpf') else None
         )
+        cpf_input = Formatters.format_cpf_input(cpf_raw)
         if empty_fields.get('cpf'):
             mark_field_empty("stTextInput", "required")
 
     whats_label = "⚠️ WhatsApp/Telefone * (campo vazio)" if empty_fields.get('whatsapp') else "WhatsApp/Telefone *"
-    whats_input = st.text_input(
+    whats_raw = st.text_input(
         whats_label,
         value=Formatters.phone(initial.get("whatsapp_telefone", "")),
         placeholder="(88) 9.9999-9999",
         key=f"{prefix}whats",
-        max_chars=15,
+        max_chars=16,
         help="Campo obrigatório - preencher" if empty_fields.get('whatsapp') else None
     )
+    whats_input = Formatters.format_phone_input(whats_raw)
     if empty_fields.get('whatsapp'):
         mark_field_empty("stTextInput", "required")
 
