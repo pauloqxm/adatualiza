@@ -112,7 +112,7 @@ class Nacionalidade(str, Enum):
 class Config:
     TITLE: str = "Sistema de Cadastro - ADTC Quixeramobim"
     VERSION: str = "3.1.0"
-    ICON: str = "⛪"
+    ICON: str = "📝"
     LOGO_PATH: str = "data/logo_ad.jpg"
     TZ: ZoneInfo = field(default_factory=lambda: ZoneInfo("America/Fortaleza"))
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
