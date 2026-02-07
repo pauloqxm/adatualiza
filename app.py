@@ -134,7 +134,8 @@ class Config:
         "membro_id", "cod_membro", "data_nasc", "nome_mae", "nome_completo",
         "cpf", "whatsapp_telefone", "bairro_distrito", "endereco", "nome_pai",
         "nacionalidade", "naturalidade", "estado_civil", "data_batismo",
-        "congregacao", "atualizado"
+        "congregacao", "cargo", "data_consag_auxiliar", "data_consag_diacono",
+        "data_consag_presbitero", "atualizado"
     )
 
     REQUIRED: dict = field(default_factory=lambda: {
@@ -997,6 +998,48 @@ def render_family(prefix: str, initial: dict, empty_fields: dict) -> dict:
         "nome_pai": TextUtils.sanitize_input(pai),
     }
 
+def render_ministerial_data(prefix: str, initial: dict) -> dict:
+    """Renderiza seção de dados ministeriais"""
+    st.markdown("### ⛪ Dados Ministeriais")
+
+    cargo = st.text_input(
+        "Cargo",
+        value=TextUtils.clean(initial.get("cargo", "")),
+        key=f"{prefix}cargo",
+        placeholder="Ex.: Diácono, Presbítero, Auxiliar"
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        consag_auxiliar = st.text_input(
+            "Data consagração auxiliar",
+            value=TextUtils.clean(initial.get("data_consag_auxiliar", "")),
+            key=f"{prefix}consag_aux",
+            placeholder="Ex.: 15/08/2010"
+        )
+
+    with col2:
+        consag_diacono = st.text_input(
+            "Data consagração diácono",
+            value=TextUtils.clean(initial.get("data_consag_diacono", "")),
+            key=f"{prefix}consag_diac",
+            placeholder="Ex.: 20/05/2015"
+        )
+
+    consag_presbitero = st.text_input(
+        "Data consagração presbítero",
+        value=TextUtils.clean(initial.get("data_consag_presbitero", "")),
+        key=f"{prefix}consag_presb",
+        placeholder="Ex.: 10/12/2020"
+    )
+
+    return {
+        "cargo": TextUtils.sanitize_input(cargo),
+        "data_consag_auxiliar": TextUtils.sanitize_input(consag_auxiliar),
+        "data_consag_diacono": TextUtils.sanitize_input(consag_diacono),
+        "data_consag_presbitero": TextUtils.sanitize_input(consag_presbitero),
+    }
+
 def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdown_opts: dict) -> dict:
     """Renderiza seção de dados complementares"""
     st.markdown("### 📝 Dados complementares")
@@ -1141,6 +1184,7 @@ def render_member_form(
         form_data.update(render_address(key_prefix, initial_data, empty_fields))
         form_data.update(render_family(key_prefix, initial_data, empty_fields))
         form_data.update(render_complementary(key_prefix, initial_data, empty_fields, dropdown_opts))
+        form_data.update(render_ministerial_data(key_prefix, initial_data))
 
         st.divider()
         render_form_summary(empty_fields)
@@ -1217,6 +1261,10 @@ def handle_new_member(worksheet, df: pd.DataFrame, form_data: dict, dropdown_opt
         "estado_civil": submitted_data["estado_civil"],
         "data_batismo": submitted_data["data_batismo"],
         "congregacao": submitted_data["congregacao"],
+        "cargo": submitted_data["cargo"],
+        "data_consag_auxiliar": submitted_data["data_consag_auxiliar"],
+        "data_consag_diacono": submitted_data["data_consag_diacono"],
+        "data_consag_presbitero": submitted_data["data_consag_presbitero"],
         "atualizado": now_str,
     }
 
@@ -1289,6 +1337,10 @@ def handle_existing_member(worksheet, df: pd.DataFrame, matches_df: pd.DataFrame
         "estado_civil": submitted_data["estado_civil"],
         "data_batismo": submitted_data["data_batismo"],
         "congregacao": submitted_data["congregacao"],
+        "cargo": submitted_data["cargo"],
+        "data_consag_auxiliar": submitted_data["data_consag_auxiliar"],
+        "data_consag_diacono": submitted_data["data_consag_diacono"],
+        "data_consag_presbitero": submitted_data["data_consag_presbitero"],
         "atualizado": now_str,
     }
 
