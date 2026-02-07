@@ -292,6 +292,20 @@ class Validators:
 
 class Formatters:
     @staticmethod
+    def format_date_input(value: str) -> str:
+        """Formata automaticamente datas com barras"""
+        digits = TextUtils.only_digits(value)
+        if len(digits) == 0:
+            return ""
+        if len(digits) <= 2:
+            return digits
+        if len(digits) <= 4:
+            return f"{digits[:2]}/{digits[2:]}"
+        if len(digits) <= 8:
+            return f"{digits[:2]}/{digits[2:4]}/{digits[4:]}"
+        return f"{digits[:2]}/{digits[2:4]}/{digits[4:8]}"
+
+    @staticmethod
     def cpf(cpf_input: str) -> str:
         digits = TextUtils.only_digits(cpf_input)
         if len(digits) != CFG.CPF_LENGTH:
@@ -1011,33 +1025,39 @@ def render_ministerial_data(prefix: str, initial: dict) -> dict:
 
     col1, col2 = st.columns(2)
     with col1:
-        consag_auxiliar = st.text_input(
+        consag_auxiliar_raw = st.text_input(
             "Data consagração auxiliar",
             value=TextUtils.clean(initial.get("data_consag_auxiliar", "")),
             key=f"{prefix}consag_aux",
-            placeholder="Ex.: 15/08/2010"
+            placeholder="Ex.: 15/08/2010",
+            max_chars=10
         )
+        consag_auxiliar = Formatters.format_date_input(consag_auxiliar_raw)
 
     with col2:
-        consag_diacono = st.text_input(
+        consag_diacono_raw = st.text_input(
             "Data consagração diácono",
             value=TextUtils.clean(initial.get("data_consag_diacono", "")),
             key=f"{prefix}consag_diac",
-            placeholder="Ex.: 20/05/2015"
+            placeholder="Ex.: 20/05/2015",
+            max_chars=10
         )
+        consag_diacono = Formatters.format_date_input(consag_diacono_raw)
 
-    consag_presbitero = st.text_input(
+    consag_presbitero_raw = st.text_input(
         "Data consagração presbítero",
         value=TextUtils.clean(initial.get("data_consag_presbitero", "")),
         key=f"{prefix}consag_presb",
-        placeholder="Ex.: 10/12/2020"
+        placeholder="Ex.: 10/12/2020",
+        max_chars=10
     )
+    consag_presbitero = Formatters.format_date_input(consag_presbitero_raw)
 
     return {
         "cargo": TextUtils.sanitize_input(cargo),
-        "data_consag_auxiliar": TextUtils.sanitize_input(consag_auxiliar),
-        "data_consag_diacono": TextUtils.sanitize_input(consag_diacono),
-        "data_consag_presbitero": TextUtils.sanitize_input(consag_presbitero),
+        "data_consag_auxiliar": consag_auxiliar,
+        "data_consag_diacono": consag_diacono,
+        "data_consag_presbitero": consag_presbitero,
     }
 
 def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdown_opts: dict) -> dict:
@@ -1091,13 +1111,15 @@ def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdow
     col1, col2 = st.columns(2)
     with col1:
         bat_label = "💡 Data do batismo (recomendado)" if empty_fields.get('batismo') else "Data do batismo"
-        batismo = st.text_input(
+        batismo_raw = st.text_input(
             bat_label,
             value=TextUtils.clean(initial.get("data_batismo", "")),
             key=f"{prefix}bat",
             placeholder="Ex.: 05/12/1992",
+            max_chars=10,
             help="Recomendado preencher" if empty_fields.get('batismo') else None
         )
+        batismo = Formatters.format_date_input(batismo_raw)
         if empty_fields.get('batismo'):
             mark_field_empty("stTextInput", "recommended")
 
@@ -1121,7 +1143,7 @@ def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdow
         "naturalidade": TextUtils.sanitize_input(naturalidade),
         "nacionalidade": nacionalidade,
         "estado_civil": estado_civil,
-        "data_batismo": TextUtils.sanitize_input(batismo),
+        "data_batismo": batismo,
         "congregacao": congregacao,
     }
 
@@ -1272,9 +1294,11 @@ def handle_new_member(worksheet, df: pd.DataFrame, form_data: dict, dropdown_opt
         if SheetsService.append_row(worksheet, payload):
             st.success(f"✅ Cadastro salvo! ID: {new_id}")
             st.balloons()
-            st.info("🔄 Recarregue a página para fazer nova busca")
             st.session_state.searched = False
             st.session_state.match_ids = []
+            st.session_state.search_dn = None
+            st.session_state.search_mae = ""
+            st.rerun()
 
 def handle_existing_member(worksheet, df: pd.DataFrame, matches_df: pd.DataFrame, dropdown_opts: dict):
     """Processa atualização de cadastro existente"""
@@ -1348,9 +1372,11 @@ def handle_existing_member(worksheet, df: pd.DataFrame, matches_df: pd.DataFrame
         if SheetsService.update_row(worksheet, sheet_row, payload):
             st.success("✅ Cadastro atualizado com sucesso!")
             st.balloons()
-            st.info("🔄 Recarregue a página para fazer nova busca")
             st.session_state.searched = False
             st.session_state.match_ids = []
+            st.session_state.search_dn = None
+            st.session_state.search_mae = ""
+            st.rerun()
 
 @measure_time
 def main():
