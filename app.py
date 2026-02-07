@@ -1312,7 +1312,7 @@ def handle_new_member(worksheet, df: pd.DataFrame, form_data: dict, dropdown_opt
         "nome_mae": submitted_data["nome_mae"],
         "nome_completo": submitted_data["nome_completo"],
         "cpf": Formatters.cpf(submitted_data["cpf"]),
-        "whatsapp_telefone": Formatters.phone(submitted_data["whatsapp_telefone"]),
+        "whatsapp_telefone": TextUtils.only_digits(submitted_data["whatsapp_telefone"]),  # Apenas números
         "bairro_distrito": submitted_data["bairro_distrito"],
         "endereco": submitted_data["endereco"],
         "nome_pai": submitted_data["nome_pai"],
@@ -1389,7 +1389,7 @@ def handle_existing_member(worksheet, df: pd.DataFrame, matches_df: pd.DataFrame
         "nome_completo": submitted_data["nome_completo"],
         "data_nasc": Formatters.date_br(submitted_data["data_nasc"]),
         "cpf": Formatters.cpf(submitted_data["cpf"]),
-        "whatsapp_telefone": Formatters.phone(submitted_data["whatsapp_telefone"]),
+        "whatsapp_telefone": TextUtils.only_digits(submitted_data["whatsapp_telefone"]),  # Apenas números
         "bairro_distrito": submitted_data["bairro_distrito"],
         "endereco": submitted_data["endereco"],
         "nome_mae": submitted_data["nome_mae"],
