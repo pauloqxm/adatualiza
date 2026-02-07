@@ -110,7 +110,7 @@ class Nacionalidade(str, Enum):
 
 @dataclass(frozen=True)
 class Config:
-    TITLE: str = "Sistema de Cadastro - Assembleia de Deus"
+    TITLE: str = "Sistema de Cadastro - ADTC Quixeramobim"
     VERSION: str = "3.1.0"
     ICON: str = "⛪"
     LOGO_PATH: str = "data/logo_ad.jpg"
