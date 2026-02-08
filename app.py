@@ -112,7 +112,7 @@ class Nacionalidade(str, Enum):
 class Config:
     TITLE: str = "Sistema de Cadastro - ADTC Quixeramobim"
     VERSION: str = "3.1.0"
-    ICON: str = "⛪"
+    ICON: str = "📝"
     LOGO_PATH: str = "data/logo_ad.jpg"
     TZ: ZoneInfo = field(default_factory=lambda: ZoneInfo("America/Fortaleza"))
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
@@ -1139,9 +1139,14 @@ def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdow
         if empty_fields.get('nacionalidade'):
             mark_field_empty("stSelectbox", "recommended")
 
-    ec_opts = dropdown_opts.get("estado_civil", [e.value for e in EstadoCivil])
+    ec_opts_base = dropdown_opts.get("estado_civil", [e.value for e in EstadoCivil])
+    ec_opts = ["Selecionar"] + ec_opts_base
     ec_current = TextUtils.clean(initial.get("estado_civil", "")).upper()
-    ec_idx = ec_opts.index(ec_current) if ec_current in ec_opts else 0
+    
+    if ec_current and ec_current in ec_opts_base:
+        ec_idx = ec_opts.index(ec_current)
+    else:
+        ec_idx = 0
 
     ec_label = "⚠️ Estado civil * (campo vazio)" if empty_fields.get('estado_civil') else "Estado civil *"
     estado_civil = st.selectbox(
@@ -1153,6 +1158,10 @@ def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdow
     )
     if empty_fields.get('estado_civil'):
         mark_field_empty("stSelectbox", "required")
+    
+    # Se "Selecionar" foi escolhido, retorna vazio
+    if estado_civil == "Selecionar":
+        estado_civil = ""
 
     col1, col2 = st.columns(2)
     with col1:
