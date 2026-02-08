@@ -112,7 +112,7 @@ class Nacionalidade(str, Enum):
 class Config:
     TITLE: str = "Sistema de Cadastro - ADTC Quixeramobim"
     VERSION: str = "3.1.0"
-    ICON: str = "📝"
+    ICON: str = "⛪"
     LOGO_PATH: str = "data/logo_ad.jpg"
     TZ: ZoneInfo = field(default_factory=lambda: ZoneInfo("America/Fortaleza"))
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
@@ -1363,6 +1363,31 @@ def handle_existing_member(worksheet, df: pd.DataFrame, matches_df: pd.DataFrame
         selected_idx = matches_df.index[0]
 
     row_data = df.loc[selected_idx].to_dict()
+    
+    # Verifica se CPF está preenchido
+    cpf_value = TextUtils.clean(row_data.get("cpf", ""))
+    has_cpf = not TextUtils.is_empty(cpf_value)
+    
+    if has_cpf:
+        # CPF preenchido - mostra apenas nome e data de atualização
+        nome_completo = TextUtils.clean(row_data.get("nome_completo", "")) or "(Sem nome)"
+        data_atualizacao = TextUtils.clean(row_data.get("atualizado", "")) or "Não disponível"
+        
+        st.success("✅ Cadastro já atualizado!")
+        st.markdown(f"""
+        <div style="background:white;border:2px solid #10B981;border-radius:18px;
+                    padding:24px;box-shadow:0 10px 20px rgba(2,6,23,.08);margin:20px 0;">
+            <div style="font-weight:900;color:#059669;font-size:1.4rem;margin-bottom:16px;">
+                {nome_completo}
+            </div>
+            <div style="color:#64748B;font-weight:600;font-size:1rem;">
+                <strong>Última atualização:</strong> {data_atualizacao}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    # CPF não preenchido - mostra formulário completo
     render_member_preview(row_data, total_found)
 
     sheet_row = int(row_data["_sheet_row"])
