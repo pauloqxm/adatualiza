@@ -112,7 +112,7 @@ class Nacionalidade(str, Enum):
 class Config:
     TITLE: str = "Sistema de Cadastro - ADTC Quixeramobim"
     VERSION: str = "3.1.0"
-    ICON: str = "📝"
+    ICON: str = "⛪"
     LOGO_PATH: str = "data/logo_ad.jpg"
     TZ: ZoneInfo = field(default_factory=lambda: ZoneInfo("America/Fortaleza"))
     SPREADSHEET_ID: str = "1IUXWrsoBC58-Pe_6mcFQmzgX1xm6GDYvjP1Pd6FH3D0"
@@ -989,18 +989,27 @@ def render_address(prefix: str, initial: dict, empty_fields: dict) -> dict:
     st.markdown("### 📍 Endereço")
 
     bairro_current = TextUtils.clean(initial.get("bairro_distrito", ""))
-    bairro_idx = CFG.BAIRROS.index(bairro_current) if bairro_current in CFG.BAIRROS else 0
+    bairro_options = ["Selecionar"] + list(CFG.BAIRROS)
+    
+    if bairro_current and bairro_current in CFG.BAIRROS:
+        bairro_idx = bairro_options.index(bairro_current)
+    else:
+        bairro_idx = 0
 
     bairro_label = "⚠️ Bairro/Distrito * (campo vazio)" if empty_fields.get('bairro') else "Bairro/Distrito *"
     bairro = st.selectbox(
         bairro_label,
-        options=CFG.BAIRROS,
+        options=bairro_options,
         index=bairro_idx,
         key=f"{prefix}bairro",
         help="Campo obrigatório - selecionar" if empty_fields.get('bairro') else None
     )
     if empty_fields.get('bairro'):
         mark_field_empty("stSelectbox", "required")
+    
+    # Se "Selecionar" foi escolhido, retorna vazio
+    if bairro == "Selecionar":
+        bairro = ""
 
     endereco_label = "⚠️ Endereço completo * (campo vazio)" if empty_fields.get('endereco') else "Endereço completo *"
     endereco = st.text_input(
@@ -1162,9 +1171,14 @@ def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdow
             mark_field_empty("stTextInput", "recommended")
 
     with col2:
-        cong_opts = dropdown_opts.get("congregacao", ["SEDE", "OUTRA"])
+        cong_opts_base = dropdown_opts.get("congregacao", ["SEDE", "OUTRA"])
+        cong_opts = ["Selecionar"] + cong_opts_base
         cong_current = TextUtils.clean(initial.get("congregacao", "")).upper()
-        cong_idx = cong_opts.index(cong_current) if cong_current in cong_opts else 0
+        
+        if cong_current and cong_current in cong_opts_base:
+            cong_idx = cong_opts.index(cong_current)
+        else:
+            cong_idx = 0
 
         cong_label = "⚠️ Congregação * (campo vazio)" if empty_fields.get('congregacao') else "Congregação *"
         congregacao = st.selectbox(
@@ -1176,6 +1190,10 @@ def render_complementary(prefix: str, initial: dict, empty_fields: dict, dropdow
         )
         if empty_fields.get('congregacao'):
             mark_field_empty("stSelectbox", "required")
+        
+        # Se "Selecionar" foi escolhido, retorna vazio
+        if congregacao == "Selecionar":
+            congregacao = ""
 
     return {
         "naturalidade": TextUtils.sanitize_input(naturalidade),
@@ -1371,7 +1389,13 @@ def handle_existing_member(worksheet, df: pd.DataFrame, matches_df: pd.DataFrame
     if has_cpf:
         # CPF preenchido - mostra apenas nome e data de atualização
         nome_completo = TextUtils.clean(row_data.get("nome_completo", "")) or "(Sem nome)"
-        data_atualizacao = TextUtils.clean(row_data.get("atualizado", "")) or "Não disponível"
+        data_atualizacao_raw = TextUtils.clean(row_data.get("atualizado", ""))
+        
+        # Extrai apenas dd/mm/aaaa da data (remove hora se existir)
+        if data_atualizacao_raw and " " in data_atualizacao_raw:
+            data_atualizacao = data_atualizacao_raw.split(" ")[0]  # Pega apenas a parte da data
+        else:
+            data_atualizacao = data_atualizacao_raw or "Não disponível"
         
         st.success("✅ Cadastro já atualizado!")
         st.markdown(f"""
