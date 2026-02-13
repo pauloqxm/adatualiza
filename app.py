@@ -140,7 +140,6 @@ class Config:
 
     REQUIRED: dict = field(default_factory=lambda: {
         "nome_completo": "Nome completo",
-        "cpf": "CPF",
         "data_nasc": "Data de nascimento",
         "whatsapp_telefone": "WhatsApp/Telefone",
         "bairro_distrito": "Bairro/Distrito",
@@ -581,9 +580,12 @@ def validate_member_data(data: dict) -> tuple[bool, list[str]]:
             if TextUtils.is_empty(value):
                 errors.append(f"{label} é obrigatório")
 
-    cpf_result = Validators.cpf(sanitized_data.get('cpf', ''))
-    if not cpf_result:
-        errors.append(cpf_result.message)
+    # Valida CPF apenas se foi preenchido
+    cpf_value = sanitized_data.get('cpf', '')
+    if not TextUtils.is_empty(cpf_value):
+        cpf_result = Validators.cpf(cpf_value)
+        if not cpf_result:
+            errors.append(cpf_result.message)
 
     phone_result = Validators.phone(sanitized_data.get('whatsapp_telefone', ''))
     if not phone_result:
@@ -947,7 +949,7 @@ def render_personal_data(prefix: str, initial: dict, empty_fields: dict) -> dict
         )
 
     with col2:
-        cpf_label = "⚠️ CPF * (campo vazio)" if empty_fields.get('cpf') else "CPF *"
+        cpf_label = "💡 CPF (recomendado)" if empty_fields.get('cpf') else "CPF"
         cpf_value = Formatters.cpf(initial.get("cpf", ""))
         cpf_input = st.text_input(
             cpf_label,
@@ -955,10 +957,10 @@ def render_personal_data(prefix: str, initial: dict, empty_fields: dict) -> dict
             placeholder="000.000.000-00",
             key=f"{prefix}cpf",
             max_chars=14,
-            help="Campo obrigatório - preencher" if empty_fields.get('cpf') else None
+            help="Recomendado preencher" if empty_fields.get('cpf') else None
         )
         if empty_fields.get('cpf'):
-            mark_field_empty("stTextInput", "required")
+            mark_field_empty("stTextInput", "recommended")
 
     whats_label = "⚠️ WhatsApp/Telefone * (campo vazio)" if empty_fields.get('whatsapp') else "WhatsApp/Telefone *"
     whats_value = Formatters.phone(initial.get("whatsapp_telefone", ""))
@@ -1230,13 +1232,13 @@ def calculate_empty_fields(initial_data: dict) -> dict:
 def render_form_summary(empty_fields: dict):
     """Renderiza resumo de campos vazios"""
     required_empty = sum([
-        empty_fields['cpf'], empty_fields['whatsapp'], 
+        empty_fields['whatsapp'], 
         empty_fields['endereco'], empty_fields['bairro'],
         empty_fields['estado_civil'], empty_fields['congregacao']
     ])
 
     recommended_empty = sum([
-        empty_fields['pai'], empty_fields['naturalidade'],
+        empty_fields['cpf'], empty_fields['pai'], empty_fields['naturalidade'],
         empty_fields['nacionalidade'], empty_fields['batismo']
     ])
 
